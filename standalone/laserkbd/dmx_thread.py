@@ -23,12 +23,14 @@ log = logging.getLogger(__name__)
 
 
 class DmxThread(threading.Thread):
-    def __init__(self, state: KeyState, config: ConfigHolder, stop_event: threading.Event):
+    def __init__(self, state: KeyState, config: ConfigHolder,
+                 stop_event: threading.Event, dry_run: bool = False):
         super().__init__(name="dmx", daemon=True)
         self._state = state
         self._config = config
         self._stop = stop_event
-        self._sender = ArtNetSender()
+        self._dry_run = dry_run
+        self._sender = ArtNetSender(dry_run=dry_run)
 
     def _render(self, cfg: Config) -> bytes:
         """Map held keys onto beam channels. Returns the DMX byte frame."""
@@ -53,8 +55,9 @@ class DmxThread(threading.Thread):
         return "255.255.255.255"
 
     def run(self) -> None:
-        log.info("DMX thread started")
+        log.info("DMX thread started%s", " (dry-run: not sending)" if self._dry_run else "")
         next_tick = time.perf_counter()
+        last_status = next_tick
         while not self._stop.is_set():
             cfg = self._config.get()
             period = 1.0 / max(1.0, cfg.tick_hz)
@@ -62,8 +65,16 @@ class DmxThread(threading.Thread):
             frame = self._render(cfg)
             self._sender.send(self._target_ip(cfg), cfg.artnet_universe, frame)
 
-            next_tick += period
             now = time.perf_counter()
+            if self._dry_run and now - last_status >= 2.0:
+                lit = sum(1 for b in frame if b)
+                log.info("dry-run tick: %.0f Hz, %d/%d channels lit, target %s uni %d",
+                         cfg.tick_hz, lit, len(frame), self._target_ip(cfg),
+                         cfg.artnet_universe)
+                last_status = now
+
+            next_tick += period
+            now = time.perf_counter()  # re-read: the status log above may have taken time
             sleep = next_tick - now
             if sleep > 0:
                 self._stop.wait(sleep)

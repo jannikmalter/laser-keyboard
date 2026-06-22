@@ -49,24 +49,35 @@ def build_artpoll() -> bytes:
 
 
 class ArtNetSender:
-    """Sends ArtDMX frames to a broadcast address or a specific unicast IP."""
+    """Sends ArtDMX frames to a broadcast address or a specific unicast IP.
 
-    def __init__(self, port: int = DEFAULT_PORT):
+    In dry_run mode the packet is still built (so the encoding path is exercised) but
+    nothing is put on the wire — used by --dry-run to test without a real node.
+    """
+
+    def __init__(self, port: int = DEFAULT_PORT, dry_run: bool = False):
         self._port = port
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self._dry_run = dry_run
         self._sequence = 1
+        if dry_run:
+            self._sock = None
+        else:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     def send(self, target_ip: str, universe: int, data: bytes) -> None:
         packet = build_artdmx(universe, data, self._sequence)
         self._sequence = 1 if self._sequence >= 255 else self._sequence + 1
+        if self._sock is None:  # dry-run: packet built but not sent
+            return
         try:
             self._sock.sendto(packet, (target_ip, self._port))
         except OSError as exc:
             log.warning("ArtNet send to %s failed: %s", target_ip, exc)
 
     def close(self) -> None:
-        self._sock.close()
+        if self._sock is not None:
+            self._sock.close()
 
 
 def discover_nodes(timeout: float = 2.0, port: int = DEFAULT_PORT) -> list[dict]:

@@ -15,9 +15,10 @@ from pathlib import Path
 from .config import DEFAULT_CONFIG_PATH, Config, ConfigHolder
 from .dmx_thread import DmxThread
 from .log_buffer import RingBufferHandler
-from .midi_thread import MidiThread
 from .state import KeyState
 from .web import create_app
+
+# MidiThread is imported lazily in main() so that --dry-run works without rtmidi.
 
 log = logging.getLogger(__name__)
 
@@ -39,29 +40,48 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="laserkbd")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH,
                         help="path to config.json")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="run without real hardware (simulated keyboard, ArtNet "
+                             "output suppressed) — for testing the web UI")
     args = parser.parse_args()
 
-    config = Config.load(args.config)
-    ring = setup_logging(config.log_level)
+    ring = setup_logging("INFO")
+    config = Config.load(args.config)  # logged via the handlers set up just above
+    logging.getLogger().setLevel(getattr(logging, config.log_level.upper(), logging.INFO))
     log.info("laser-keyboard standalone starting (config: %s)", args.config)
+    if args.dry_run:
+        log.info("DRY RUN: simulated keyboard, ArtNet output suppressed")
 
     holder = ConfigHolder(config, args.config)
     state = KeyState(config.key_count)
     stop_event = threading.Event()
 
-    midi = MidiThread(state, holder, stop_event)
-    dmx = DmxThread(state, holder, stop_event)
+    if args.dry_run:
+        from .sim import SimulatedMidiThread
+        midi = SimulatedMidiThread(state, holder, stop_event)
+    else:
+        from .midi_thread import MidiThread
+        midi = MidiThread(state, holder, stop_event)
+    dmx = DmxThread(state, holder, stop_event, dry_run=args.dry_run)
     midi.start()
     dmx.start()
 
     # Flask dev server runs in a daemon thread so the main thread can wait on signals.
     app = create_app(state, holder, ring)
-    web = threading.Thread(
-        target=lambda: app.run(host=config.web_host, port=config.web_port,
-                               threaded=True, use_reloader=False),
-        name="web", daemon=True)
+
+    def run_web():
+        try:
+            app.run(host=config.web_host, port=config.web_port,
+                    threaded=True, use_reloader=False)
+        except OSError as exc:
+            log.error("web UI could not start on %s:%s (%s)", config.web_host,
+                      config.web_port, exc)
+            log.error("the port is likely in use or reserved — set a free \"web_port\" "
+                      "in %s and restart", args.config)
+
+    web = threading.Thread(target=run_web, name="web", daemon=True)
     web.start()
-    log.info("web UI on http://%s:%s", config.web_host, config.web_port)
+    log.info("web UI starting on http://%s:%s", config.web_host, config.web_port)
 
     def shutdown(signum, _frame):
         log.info("signal %s received, shutting down", signum)

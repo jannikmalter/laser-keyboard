@@ -39,7 +39,7 @@ class Config:
 
     # --- Web / logging ------------------------------------------------------
     web_host: str = "0.0.0.0"
-    web_port: int = 8080
+    web_port: int = 8088   # 8080 is commonly taken/reserved on Windows; change if busy
     log_level: str = "INFO"
 
     @classmethod

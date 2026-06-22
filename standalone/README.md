@@ -36,6 +36,17 @@ python -m laserkbd                  # optional: --config /path/to/config.json
 Then open `http://<host>:8080`. Settings are saved to `config.json` next to the
 package and reloaded on restart.
 
+### Dry-run (test the web UI without hardware)
+
+```bash
+python -m laserkbd --dry-run     # only needs flask, not python-rtmidi
+```
+
+Dry-run replaces the keyboard with a simulator that sweeps a single beam (so the UI
+shows live "keys held" activity and the render loop logs a status line every couple
+of seconds) and suppresses all ArtNet output — nothing is put on the network. Use it
+to develop and test the web interface on any machine, no Pi/keyboard/node required.
+
 ## Run on the Pi (systemd)
 
 Edit paths/user in `laser-keyboard.service`, then:

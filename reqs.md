@@ -123,6 +123,8 @@ on real hardware (Pi + keyboard + ArtNet node). `[ ]` items are not done.
 - [~] Fixture/DMX mapping in config — the 4× BeamBar 10R addressing (base addresses
       0/13/26/39, per-beam channel offsets) now lives in Python, not QLC+
 - [~] Flask web interface: live log view + settings editor
+- [x] Dry-run mode (`--dry-run`): simulated keyboard + suppressed ArtNet output, for
+      testing the web UI without hardware (only needs flask, not rtmidi)
 - [x] Settings persisted across restarts (config file on disk, round-trip tested)
 - [~] Run on boot as a systemd service (`laser-keyboard.service`); MIDI auto-reconnect
 - [~] Clean shutdown of all threads on stop (SIGINT/SIGTERM -> stop event -> join)
