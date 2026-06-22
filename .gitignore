@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# QLC+ backups
+*.qxw.bak
+*~
+
+# OS / editor
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
