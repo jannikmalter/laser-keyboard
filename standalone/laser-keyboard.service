@@ -1,0 +1,16 @@
+[Unit]
+Description=laser-keyboard standalone (MIDI -> ArtNet)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User and paths to match your Pi install.
+User=pi
+WorkingDirectory=/home/pi/laser-keyboard/standalone
+ExecStart=/home/pi/laser-keyboard/standalone/.venv/bin/python -m laserkbd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

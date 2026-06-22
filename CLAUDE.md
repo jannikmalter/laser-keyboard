@@ -5,45 +5,69 @@ Guidance for working in this repository.
 ## What this is
 
 An interactive lighting installation. A person plays a **MIDI keyboard**; a Python
-script interprets the notes and drives **laser bars** (and bonus effects) through
-**QLC+** (Q Light Controller Plus). Each keyboard key maps to one individual laser
-beam. As a bonus, the script detects when certain chords are played and triggers
-extra QLC+ effects.
+script interprets the notes so that each key lights one individual **laser beam**,
+and certain chords trigger bonus effects.
+
+There are **two builds** of the same installation:
+
+- **`qlcplus/`** — the original, PC-tethered build. Python cleans up the keyboard's
+  MIDI and forwards it to **QLC+**, which owns the fixtures, effects and DMX output.
+
+  ```
+  MIDI keyboard ──► qlcplus/laserkeyboard.py ──► loopMIDI ──► QLC+ ──► DMX (USB) ──► laser bars
+  ```
+
+- **`standalone/`** — the self-contained rewrite. A Raspberry Pi 3B+ inside the
+  keyboard enclosure runs the `laserkbd` package and emits **ArtNet** directly — no
+  PC, no QLC+. Three threads: MIDI input, a ~100 Hz DMX/ArtNet render loop, and a
+  Flask web UI. In development (Milestone 1); see `reqs.md`.
+
+  ```
+  MIDI keyboard ──USB──► Raspberry Pi (laserkbd) ──ArtNet/UDP──► node ──DMX──► laser bars
+  ```
+
+## Repository layout
 
 ```
-MIDI keyboard ──► Python (laserkeyboard.py) ──► loopMIDI (virtual MIDI cable) ──► QLC+ ──► DMX (USB) ──► laser bars + RGB fixtures
+qlcplus/      laserkeyboard.py (MIDI bridge) + laserkeyboard.qxw (QLC+ workspace) + requirements.txt
+standalone/   laserkbd package, requirements.txt, systemd unit — the ArtNet build
+reqs.md       requirements, roadmap and bug tracker for both builds
 ```
 
-The Python script does **not** speak DMX. It only translates keyboard input into a
-cleaned-up MIDI note stream that QLC+ consumes as its input. All fixture patching,
-scenes, effects and the MIDI→DMX mapping live in the QLC+ workspace (`.qxw`).
+The QLC+ side does **not** speak DMX: `laserkeyboard.py` only emits a cleaned-up MIDI
+note stream, and all fixture patching, scenes, effects and the MIDI→DMX mapping live
+in `qlcplus/laserkeyboard.qxw`. The standalone build replaces that whole chain with
+Python + ArtNet (the fixture mapping moves into `standalone/laserkbd/`).
 
-## Files
+## Tracking work
 
-- **`laserkeyboard.py`** — the script that runs the installation. Edit this for
-  behavior changes.
-- **`laserkeyboard.qxw`** — the QLC+ workspace (open in QLC+ 4.13+). Defines the
-  fixtures, virtual console, scenes, RGB matrix effects, and the MIDI input → DMX
-  channel mapping.
-
-These two files are the whole project.
+`reqs.md` is the single source of truth for **requirements, goals, todos and bugs**.
+Consult it before starting work and keep it current: add new requirements as they
+are conceived and check them off when they ship, log bugs (with file:line) as found
+and mark them fixed, and record future features under Goals/Todos. Treat updating
+`reqs.md` as part of completing any change, not an afterthought.
 
 ## Running it
 
-Requires Windows with [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)
-running (provides the virtual MIDI port) and QLC+ open with `laserkeyboard.qxw`.
+**QLC+ build** (`qlcplus/`) — requires Windows with
+[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) running and QLC+
+open with `laserkeyboard.qxw`:
 
 ```bash
+cd qlcplus
 pip install -r requirements.txt
 python laserkeyboard.py
 ```
 
-Ports are hard-coded by index near the top of `laserkeyboard.py`:
+Ports are hard-coded by index near the top of `qlcplus/laserkeyboard.py`:
 `midi_in_port = 0` (the keyboard) and `midi_out_port = 2` (loopMIDI). These indices
 depend on the machine's MIDI device order and often need adjusting on a new setup.
 The script polls once per second and auto-reconnects if a port drops.
 
-## How the mapping works
+**Standalone build** (`standalone/`) — see `standalone/README.md`; runs with
+`python -m laserkbd` and serves a web UI on port 8080.
+
+## How the QLC+ mapping works
 
 - **Note offset:** incoming notes are shifted by `-41` so the playable range becomes
   indices `0..31` in the `keys` array (32 keys → 32 individual laser beams).
@@ -67,9 +91,11 @@ each) into the `bars` fixture group, plus Generic RGB fixtures, and provides sce
 
 ## Notes / gotchas
 
-- `midi_event()` wraps its whole body in a bare `try/except: pass`, so MIDI parsing
-  errors are silently swallowed. Keep this in mind when debugging — a malformed
-  message or an out-of-range note index just disappears.
-- There is no test suite, linter config, or build step. It's run by hand.
+- In the QLC+ build, `midi_event()` wraps its whole body in a bare `try/except: pass`,
+  so MIDI parsing errors are silently swallowed. Keep this in mind when debugging — a
+  malformed message or an out-of-range note index just disappears. (The standalone
+  build fixes this class of bug by design.)
+- There is no linter/CI; the QLC+ build is run by hand. The standalone build has a
+  few dependency-free smoke tests you can run ad hoc.
 - `.qxw` files are XML; they're normally edited inside the QLC+ app, but small,
   targeted edits by hand are fine if you preserve the structure.
