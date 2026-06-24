@@ -101,5 +101,54 @@ each) into the `bars` fixture group, plus Generic RGB fixtures, and provides sce
 
 ## Reference
 
-No bulky reference material is consolidated under `docs/` yet. Build-specific usage
-lives in `qlcplus/README.md` and `standalone/README.md`.
+- **`docs/laserworld-beambar-10r-mk3-manual.pdf`** — the Laserworld BeamBar 10R MK3
+  manual (EN/DE/FR). The DMX-relevant parts are extracted just below; read the PDF
+  for safety, mounting, master/slave and menu details.
+- Build-specific usage lives in `qlcplus/README.md` and `standalone/README.md`.
+
+### BeamBar 10R MK3 — DMX control chart (13 channels)
+
+Each bar occupies **13 DMX channels** and has **10 laser beams**. From the manual's
+"DMX Control Chart" / "Tabelle zur DMX-Ansteuerung" (p. 10 EN / p. 18 DE):
+
+| Ch | Value   | Function                                                    |
+|----|---------|-------------------------------------------------------------|
+| 1  | 0–49    | laser off                                                   |
+| 1  | 50–99   | sound-to-light mode                                         |
+| 1  | 100–149 | automatic mode                                              |
+| 1  | 150–199 | **DMX mode** — channels 2→3 valid (program/effect playback) |
+| 1  | 200–255 | **DMX mode** — channels 4→13 valid (per-beam control)       |
+| 2  | 0–255   | program / effect selection                                  |
+| 3  | 0–255   | speed (slow→fast, 21 levels)                                |
+| 4  | 0–255   | beam 1 brightness (weak→bright)                             |
+| 5  | 0–255   | beam 2 brightness                                           |
+| 6  | 0–255   | beam 3 brightness                                           |
+| 7  | 0–255   | beam 4 brightness                                           |
+| 8  | 0–255   | beam 5 brightness                                           |
+| 9  | 0–255   | beam 6 brightness                                           |
+| 10 | 0–255   | beam 7 brightness                                           |
+| 11 | 0–255   | beam 8 brightness                                           |
+| 12 | 0–255   | beam 9 brightness                                           |
+| 13 | 0–255   | beam 10 brightness                                          |
+
+Channels 4–13 each drive **one laser output, left to right (front view)**.
+
+**Critical for per-beam control (channel 1 = mode select):** the per-beam brightness
+channels (4–13) are honoured **only when channel 1 is set to 200–255**. At the
+default value 0 the bar is in "laser off" mode and ignores the beam channels. The
+standalone build handles this: every frame, `dmx_thread._render()` drives each active
+bar's channel 1 to `fixtures.DMX_MODE_PER_BEAM` (255) — see `fixtures.active_bar_bases()`.
+Adjacent bars must not overlap this 13-channel block (base addresses 0/13/26/39 give
+four non-overlapping bars).
+
+**Addressing:** set each bar's DMX start address in its menu (`Addr` → `A001`…). The
+standalone config models this as `bar_base_addresses` (0-based: address `A001` = index
+0), with channel 1 at the base index (the mode channel) and beams at
+`beam_channel_offset` (3) → channels 4–13.
+
+### Technical data (from the manual, p. 28)
+
+- **BeamBar 10R MK3:** 10× 120 mW red (638 nm), 1.200 mW total guaranteed output.
+- Laser class **3B**; beam 3 mm / 1.1 mrad.
+- Power: 100–250 V AC, 50/60 Hz, 50 W, fuse 3 A/250 V.
+- Dimensions 1000 × 160 × 80 mm; weight 9 kg. Indoor use only.

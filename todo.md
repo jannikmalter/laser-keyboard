@@ -5,6 +5,9 @@ Work items. Reference the ID they advance.
 - [ ] End-to-end test the standalone build on the Pi with a real keyboard and ArtNet
       node; confirm the raw-socket ArtNet approach, ArtPoll discovery, and the MIDI
       device picker / live device-switch work. (R15–R28, R32, G2)
+- [x] Set each bar's channel 1 to 200–255 in the DMX output so the per-beam channels
+      (4–13) are actually honoured (per the BeamBar manual's DMX chart). Done in
+      fixtures.active_bar_bases() + dmx_thread._render(); pending hardware validation. (R23)
 - [ ] Milestone 2: chord-triggered effects, rendered in Python in the DMX thread. (G2)
 - [ ] Milestone 2: full-keyboard (12+ keys) bonus effect. (G2)
 - [ ] Milestone 2: effect parity with the old QLC+ set as desired (waves, rainbow,

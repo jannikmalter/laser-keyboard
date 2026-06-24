@@ -13,6 +13,12 @@ from __future__ import annotations
 
 from .config import Config
 
+# Channel 1 of each bar is a mode selector. Per the BeamBar 10R MK3 manual's DMX chart
+# (see info.md), the per-beam brightness channels (4-13) are honoured ONLY when channel
+# 1 is in 200-255. At its default 0 the bar is in "laser off" mode and the beams stay
+# dark. We hold every active bar's channel 1 here so the beams respond.
+DMX_MODE_PER_BEAM = 255
+
 
 def beam_channel(cfg: Config, key_index: int) -> int | None:
     """DMX channel index for a given key, or None if the key has no beam."""
@@ -21,6 +27,19 @@ def beam_channel(cfg: Config, key_index: int) -> int | None:
     if bar >= len(cfg.bar_base_addresses):
         return None
     return cfg.bar_base_addresses[bar] + cfg.beam_channel_offset + beam
+
+
+def active_bar_bases(cfg: Config) -> list[int]:
+    """Base addresses (== channel 1 index) of bars that have at least one key mapped.
+
+    These are the channels that must be driven to DMX_MODE_PER_BEAM each frame to put
+    the bars into per-beam DMX mode."""
+    bases: set[int] = set()
+    for key in range(cfg.key_count):
+        bar = key // cfg.beams_per_bar
+        if bar < len(cfg.bar_base_addresses):
+            bases.add(cfg.bar_base_addresses[bar])
+    return sorted(bases)
 
 
 def universe_size(cfg: Config) -> int:
@@ -32,6 +51,8 @@ def universe_size(cfg: Config) -> int:
         ch = beam_channel(cfg, key)
         if ch is not None:
             highest = max(highest, ch + 1)
+    for base in active_bar_bases(cfg):  # channel 1 of each bar must fit too
+        highest = max(highest, base + 1)
     # ArtNet wants an even length; clamp to the 512-channel DMX maximum.
     size = highest + (highest % 2)
     return max(2, min(512, size))

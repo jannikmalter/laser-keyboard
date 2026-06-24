@@ -35,6 +35,13 @@ class DmxThread(threading.Thread):
     def _render(self, cfg: Config) -> bytes:
         """Map held keys onto beam channels. Returns the DMX byte frame."""
         frame = bytearray(fixtures.universe_size(cfg))
+
+        # Put every bar into per-beam DMX mode (channel 1 = 200-255), otherwise the
+        # bar ignores the beam channels and stays dark. See fixtures.DMX_MODE_PER_BEAM.
+        for base in fixtures.active_bar_bases(cfg):
+            if base < len(frame):
+                frame[base] = fixtures.DMX_MODE_PER_BEAM
+
         velocities = self._state.snapshot()
         for index, velocity in enumerate(velocities):
             if velocity <= 0:
