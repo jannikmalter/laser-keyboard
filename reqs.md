@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-06-24 (R38–R41 added: standalone chords + effects)
+Status: Active · Updated: 2026-06-25 (R42 added: interactive web keyboard + chord buttons)
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -65,6 +65,7 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R39 | F    | The standalone build shall provide a chord-triggered effects engine: a recognised chord (R38) activates a named effect that the DMX thread renders over all 40 beams (4 bars × 10), composited with the per-key beams; the effect deactivates when the chord is released. Effects are closed-form animations driven by elapsed time since trigger (like `decay.py`), so the renderer stays stateless. | S | G2 | ☐ |
 | R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☐ |
 | R41 | F    | The effects engine shall provide a "left-right wave" effect: while active, beams light in quick succession left→right→left, each beam fading with a decay tuned so it is nearly fully decayed by the time the sweep returns to it. | C | G2 | ☐ |
+| R42 | F    | The web UI shall be an interactive input: clicking a virtual key (or dragging with the mouse/touch held down across the key row) shall trigger the corresponding key press(es), and a row of buttons for each configured chord shall trigger that chord, all feeding the same key state as the MIDI keyboard. The layout shall stack lasers (top), keys (middle), chords (bottom). | S | G2 | ☑ |
 
 **Standalone status note (R15–R32).** Milestone 1 was validated on real hardware
 (Pi + keyboard + ArtNet node + BeamBar 10R) on 2026-06-24: keys drive the correct
@@ -122,11 +123,11 @@ installed** — the first deploy failed to connect (`ws://…/ws` failed) purely
 package wasn't installed yet; `pip install -r requirements.txt` on the Pi is required.
 Two refinements after that: (1) `LiveBus.active()` gates the DMX-thread publish so the
 feed adds **zero** render-loop work unless a browser is watching (during a show it is
-idle); (2) it stays full tick-rate while watching (no throttle, by request). Open: a
-**residual laser flicker** persists — much reduced after the failed-WS reconnect spam was
-fixed, but still visible. Cause not yet isolated; the `active()` gate gives a clean test
-(flicker with the browser closed ⇒ not the live feed, look to 100 Hz ArtNet rate / node /
-effects). Tracked as **B7**.
+idle); (2) it stays full tick-rate while watching (no throttle, by request). The laser
+flicker seen during this work turned out **not** to be the live feed at all (nor the ArtNet
+rate): two instances were running concurrently — a stray local-PC instance sending all-zero
+frames plus the Pi sending real values — fighting over the same universe. Stopping the
+stray instance fixed it. See **B7** (resolved, no code change).
 
 **R38–R41 (standalone chords + effects).** Milestone 2's first slice: bring chord
 handling — present in the QLC+ build as R8–R11 — into the standalone build, plus a
@@ -147,6 +148,18 @@ both effects' output, frame compositing); **not yet run on the Pi + bars** — b
 until confirmed on hardware (as R33 was). NOTE: because effects address all 40 beams,
 the ArtNet node must forward ≥52 channels (up from the key-only ~44).
 
+**R42 (interactive web keyboard, 2026-06-25).** The web UI became an input, not just a
+monitor. The viz rows were reordered to lasers / keys / chords (top→bottom); the key row
+is now full-height clickable cells you can click or drag across (glissando: one key at a
+time, release-on-leave), and a chord row gives one hold-to-trigger button per configured
+chord. All of it POSTs to a tiny `/input` route that presses/releases the shared
+`KeyState`, so mouse/touch input is indistinguishable downstream from the MIDI keyboard
+(decay + chord detection + effects all apply) and the live `/ws` feed paints it back —
+no new visualisation state. Verified under `--dry-run` (held-count goes up on press, back
+down on release; chord buttons carry the right key sets). See `info.md` → "Interactive
+input (R42)". Built on a desktop without hardware; mark confirmed after a touch/mouse pass
+on the appliance.
+
 ## Bugs
 Deviations from a requirement. `Ref` = the requirement broken. B1–B6 are in the **QLC+
 build** (`qlcplus/laserkeyboard.py`); the standalone build (R16) fixes this class by
@@ -160,7 +173,8 @@ design but does not close them in the QLC+ build. B7+ are standalone-build bugs.
 | B4 | Hardwired to MIDI channel 7: status bytes `150`/`134` only match channel 7; should mask the channel (`status & 0xF0 == 0x90` / `0x80`). `qlcplus/laserkeyboard.py:46` | R1 | Md | ☐ |
 | B5 | Bare `except: pass` hides all errors, masking B1–B4; should at least log. `qlcplus/laserkeyboard.py:75-76` | R5 | Lo | ☐ |
 | B6 | Connection check doesn't detect disconnects: `get_port_name(port)` returns a name by index even after the device is unplugged/reindexed, so auto-reconnect is largely cosmetic. `qlcplus/laserkeyboard.py:90`, `:107` | R3 | Md | ☐ |
-| B7 | Residual laser flicker (standalone) on the Pi. Much reduced after the failed-WS reconnect spam stopped, but still visible. Cause not isolated — candidates: 100 Hz ArtNet too fast for the node/bars, live-feed GIL contention while a browser watches, or the chord effects. Diagnostic: with the browser closed (`LiveBus.active()` False → no live-feed work) does it still flicker? | R18 | Md | ☐ |
+| B7 | Laser flicker (standalone) on the Pi. **Not a code defect** — root cause was *two* instances running at once (a leftover local-PC instance sending all-zero ArtNet frames + the Pi sending real values), so the two senders fought over the same universe every frame. Resolved by stopping the stray instance. No fix needed; left as a reminder that concurrent senders on one universe will flicker. | R18 | Md | ☑ |
+| B8 | Live feed lags up to 10 s to resume after idle: `LiveBus.active()` was driven by `_last_wait` (bumped only when the WS handler enters/exits `wait_next`). While the keyboard is idle no frames change, so the handler stays blocked in its 10 s wait, `active()` flips False after 2 s, and the DMX thread stops publishing — so a resumed strike isn't published until the handler's wait times out. Fixed: `active()` is now a ref-count of connected `/ws` clients (add/remove on connect/disconnect), so while a browser is watching the thread publishes every tick. `live.py`, `web.py`. | R37 | Md | ☑ |
 
 ---
 *Pri:* M/S/C (must/should/could). *Sev:* Hi/Md/Lo. IDs are permanent — never reuse.

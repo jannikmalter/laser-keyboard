@@ -8,19 +8,16 @@ stream than ArtNet: 2 + 32 + 40 = 74 bytes/frame, pushed at the full tick rate.
 `LiveBus` keeps only the latest frame and a sequence counter; a WebSocket handler waits
 on the condition and is woken every time the frame changes (publish() drops identical
 frames, so an idle keyboard generates no traffic). `active()` reports whether a browser
-is currently watching, so the DMX thread can skip the snapshot work entirely when no one
-is connected — the normal case during a show — keeping the render loop lean.
+is currently watching — a ref-count of connected `/ws` clients — so the DMX thread can
+skip the snapshot work entirely when no one is connected (the normal case during a show)
+yet publish on *every* tick while someone is watching, so a strike after an idle spell
+shows up at once (B8).
 """
 
 from __future__ import annotations
 
 import threading
-import time
 from typing import Iterable
-
-# How long after a reader last waited we still consider a browser "connected" and keep
-# publishing. A little slack so a momentary stall doesn't drop the feed.
-_CONSUMER_TTL_S = 2.0
 
 
 def encode_frame(keys: Iterable[int], beams: Iterable[int]) -> bytes:
@@ -47,7 +44,7 @@ class LiveBus:
         self._cond = threading.Condition()
         self._frame = b""
         self._seq = 0
-        self._last_wait = 0.0   # monotonic time a reader last waited (drives active())
+        self._consumers = 0   # connected /ws clients (drives active())
 
     def publish(self, frame: bytes) -> None:
         """Store a new frame and wake waiters. Identical frames are dropped so a static
@@ -60,9 +57,8 @@ class LiveBus:
             self._cond.notify_all()
 
     def snapshot(self) -> tuple[int, bytes]:
-        """Current (seq, frame); also marks a consumer present (see active())."""
+        """Current (seq, frame)."""
         with self._cond:
-            self._last_wait = time.monotonic()
             return self._seq, self._frame
 
     def wait_next(self, last_seq: int, timeout: float) -> tuple[int, bytes]:
@@ -70,15 +66,25 @@ class LiveBus:
         return the current (seq, frame). On timeout the seq is unchanged, which the
         caller can resend as a keepalive to notice a dropped connection."""
         with self._cond:
-            self._last_wait = time.monotonic()
             if self._seq == last_seq:
                 self._cond.wait(timeout)
-                self._last_wait = time.monotonic()
             return self._seq, self._frame
 
-    def active(self) -> bool:
-        """True if a reader has waited recently — i.e. a browser is watching. The DMX
-        thread skips building/publishing frames when this is False, so the live feed adds
-        no work to the render loop unless someone is actually looking at the UI."""
+    def add_consumer(self) -> None:
+        """Register a connected /ws client; while any are present the DMX thread
+        publishes every tick (see active())."""
         with self._cond:
-            return (time.monotonic() - self._last_wait) < _CONSUMER_TTL_S
+            self._consumers += 1
+
+    def remove_consumer(self) -> None:
+        """Unregister a /ws client on disconnect."""
+        with self._cond:
+            self._consumers = max(0, self._consumers - 1)
+
+    def active(self) -> bool:
+        """True while at least one browser is connected to /ws. The DMX thread skips
+        building/publishing frames when this is False, so the live feed adds no work to
+        the render loop unless someone is actually watching — but publishes on every
+        tick while they are, so the feed resumes instantly after an idle spell (B8)."""
+        with self._cond:
+            return self._consumers > 0

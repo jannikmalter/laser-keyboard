@@ -115,14 +115,26 @@ _PAGE = """
    letter-spacing:.06em;color:var(--muted);text-align:right}
  .strip{flex:1;display:flex;gap:3px;height:42px;align-items:flex-end}
  .strip.dots{height:24px;align-items:center;gap:4px}
- .beam{flex:1;height:18px;border-radius:3px;background:#23262f;
-   transition:height .08s ease,background .08s ease}
- .beam.on{height:42px;background:linear-gradient(var(--accent-soft),var(--accent));
+ /* key row (R42): full-height clickable cells; click or drag to play */
+ .strip.keys{height:46px;align-items:stretch;user-select:none;touch-action:none}
+ .beam{flex:1;border-radius:4px;background:#23262f;cursor:pointer;
+   transition:background .08s ease,box-shadow .08s ease}
+ .beam:hover{background:#2e3340}
+ .beam.on{background:linear-gradient(var(--accent-soft),var(--accent));
    box-shadow:0 0 8px 1px var(--accent)}
  /* laser output: a red dot per beam, brightness driven live by --b (0..1) */
  .dot{flex:1;max-width:18px;aspect-ratio:1;border-radius:50%;
    background:rgba(255,43,70,calc(.10 + .90*var(--b,0)));
    box-shadow:0 0 calc(11px*var(--b,0)) rgba(255,43,70,calc(.85*var(--b,0)))}
+ /* chord row (R42): one button per configured chord; hold to trigger */
+ .chords{flex:1;display:flex;flex-wrap:wrap;gap:6px;user-select:none;touch-action:none}
+ .chord{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+   border-radius:8px;padding:.3rem .6rem;font-size:.82rem;font-weight:600;cursor:pointer;
+   display:flex;flex-direction:column;align-items:center;gap:.05rem;line-height:1.15;min-width:3.2rem}
+ .chord .ck{font-size:.64rem;font-weight:400;color:var(--muted)}
+ .chord:hover{border-color:var(--accent-soft)}
+ .chord.pressing{background:var(--accent);border-color:var(--accent);color:#fff}
+ .chord.pressing .ck{color:rgba(255,255,255,.8)}
 
  section{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
    padding:1.1rem 1.2rem;margin-bottom:1.1rem}
@@ -174,16 +186,29 @@ _PAGE = """
 
  <div class="viz">
   <div class="viz-row">
-   <span class="viz-lbl">Keys</span>
-   <div id="keys" class="strip">
-    {% for v in beams %}<span class="beam {{ 'on' if v > 0 }}"></span>{% endfor %}
-   </div>
-  </div>
-  <div class="viz-row">
    <span class="viz-lbl">Lasers</span>
    <div id="lasers" class="strip dots">
     {% for _ in range(beam_count) %}<span class="dot"></span>{% endfor %}
    </div>
+  </div>
+  <div class="viz-row">
+   <span class="viz-lbl">Keys</span>
+   <div id="keys" class="strip keys">
+    {% for v in beams %}<span class="beam {{ 'on' if v > 0 }}" data-i="{{ loop.index0 }}"></span>{% endfor %}
+   </div>
+  </div>
+  <div class="viz-row">
+   <span class="viz-lbl">Chords</span>
+   {% if chords %}
+    <div id="chords" class="chords">
+     {% for c in chords %}
+      <button type="button" class="chord" data-keys="{{ c.idxs|join(',') }}">{{ c.name
+        }}<span class="ck">{{ c.idxs|join(' · ') }}</span></button>
+     {% endfor %}
+    </div>
+   {% else %}
+    <div class="chords"><span class="empty" style="margin:0">no chords configured</span></div>
+   {% endif %}
   </div>
  </div>
 
@@ -300,6 +325,59 @@ _PAGE = """
    ws.onerror = function(){ try{ ws.close(); }catch(_){} };
  }
 
+ // ---- interactive virtual keyboard (R42) --------------------------------
+ // Click a key, or drag with the pointer held across the key row, to play; hold a
+ // chord button to strike all its keys. Both POST to /input, which presses/releases
+ // the same KeyState the MIDI thread drives, so the live feed paints them back.
+ var INPUT_VELOCITY = 100;   // mouse has no velocity; use a medium-hard strike
+ function sendInput(keys, down){
+   if(!keys || !keys.length) return;
+   fetch('/input', {method:'POST', headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({keys:keys, down:down, velocity:INPUT_VELOCITY}),
+     keepalive:true}).catch(function(){});
+ }
+
+ var keysWrap = document.getElementById('keys');
+ var dragging = false, curKey = -1;
+ function keyAt(x, y){
+   var el = document.elementFromPoint(x, y);
+   if(el && el.classList.contains('beam') && el.dataset.i !== undefined)
+     return parseInt(el.dataset.i, 10);
+   return -1;   // pointer is off the key row
+ }
+ function setKey(i){           // one key held at a time while sliding (glissando)
+   if(i === curKey) return;
+   if(curKey >= 0) sendInput([curKey], false);   // release the one we left
+   curKey = i;
+   if(curKey >= 0) sendInput([curKey], true);     // strike the one we entered
+ }
+ keysWrap.addEventListener('pointerdown', function(e){
+   dragging = true;
+   try{ keysWrap.setPointerCapture(e.pointerId); }catch(_){}
+   setKey(keyAt(e.clientX, e.clientY));
+   e.preventDefault();
+ });
+ keysWrap.addEventListener('pointermove', function(e){
+   if(dragging) setKey(keyAt(e.clientX, e.clientY));
+ });
+ function endDrag(){ if(dragging){ dragging = false; setKey(-1); } }
+ window.addEventListener('pointerup', endDrag);
+ window.addEventListener('pointercancel', endDrag);
+
+ Array.prototype.forEach.call(document.querySelectorAll('.chord'), function(btn){
+   var keys = (btn.dataset.keys || '').split(',')
+     .filter(function(s){ return s !== ''; }).map(Number);
+   var held = false;
+   function down(e){ e.preventDefault(); if(held) return; held = true;
+     btn.classList.add('pressing'); sendInput(keys, true); }
+   function up(){ if(!held) return; held = false;
+     btn.classList.remove('pressing'); sendInput(keys, false); }
+   btn.addEventListener('pointerdown', down);
+   btn.addEventListener('pointerup', up);
+   btn.addEventListener('pointerleave', up);   // slide off the button -> release
+   btn.addEventListener('pointercancel', up);
+ });
+
  logbox.scrollTop = logbox.scrollHeight;
  connectFrames();
  connectLogs();
@@ -324,6 +402,7 @@ def _register_websockets(app: Flask, live_bus: LiveBus | None,
     def ws_frames(ws):  # pragma: no cover - exercised over a real socket
         if live_bus is None:
             return
+        live_bus.add_consumer()   # mark a browser watching -> DMX thread publishes every tick
         seq, frame = live_bus.snapshot()
         try:
             ws.send(frame)
@@ -332,6 +411,8 @@ def _register_websockets(app: Flask, live_bus: LiveBus | None,
                 ws.send(frame)   # changed frame, or a keepalive resend on timeout
         except Exception:
             pass
+        finally:
+            live_bus.remove_consumer()
 
     @sock.route("/logs")
     def ws_logs(ws):  # pragma: no cover - exercised over a real socket
@@ -361,6 +442,9 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
         editable = {name: getattr(cfg, name) for name in _EDITABLE}
         target = cfg.artnet_ip if cfg.artnet_mode == "unicast" else "broadcast"
         beams = [v for v, _ in state.snapshot()]
+        # Chord buttons (R42). `idxs`/`name` avoid Jinja's dict-`.keys` method clash.
+        chords = [{"idxs": c.get("keys", []), "name": c.get("effect", "") or "chord"}
+                  for c in cfg.chords]
         return render_template_string(
             _PAGE,
             version=__version__,
@@ -368,6 +452,7 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
             groups=_GROUPS,
             editable=editable,
             beams=beams,
+            chords=chords,
             beam_count=len(fixtures.all_beam_channels(cfg)),
             held=state.held_count(),
             target=target,
@@ -381,6 +466,29 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
     @app.get("/")
     def index():
         return render()
+
+    @app.post("/input")
+    def input_keys():
+        """Virtual-keyboard input from the web UI (R42). Body: JSON
+        {"keys": [idx, ...], "down": bool, "velocity": int}. Presses or releases the
+        given key indices into the same KeyState the MIDI thread drives — a chord is
+        just its constituent keys. press()/release() guard the index range."""
+        data = request.get_json(silent=True) or {}
+        down = bool(data.get("down"))
+        try:
+            velocity = int(data.get("velocity", 100) or 100)
+        except (TypeError, ValueError):
+            velocity = 100
+        for k in data.get("keys", []):
+            try:
+                idx = int(k)
+            except (TypeError, ValueError):
+                continue
+            if down:
+                state.press(idx, velocity)
+            else:
+                state.release(idx)
+        return ("", 204)
 
     @app.post("/settings")
     def settings():

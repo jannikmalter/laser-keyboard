@@ -141,15 +141,22 @@ framework). Settings are grouped into labelled sections from `_GROUPS` (each fie
 carries a human label + a unit hint); `_EDITABLE` — the name→caster map the POST
 handler uses — is derived from `_GROUPS`, so adding a setting is one entry.
 
-The page shows two live strips: a **32-key input row** (lit when a key is held) and a
-**40-beam laser-output row** (one red dot per beam, brightness driven live). They update
-over two WebSockets, registered via **flask-sock** in `_register_websockets` (skipped
-with a warning if flask-sock is absent — the page then just shows its page-load snapshot):
+The page shows three stacked viz rows (top → bottom): a **40-beam laser-output row** (one
+red dot per beam, brightness driven live), a **32-key input row** (lit when a key is held),
+and a **chord row** (one button per configured chord). The top two strips update live over
+two WebSockets, registered via **flask-sock** in `_register_websockets` (skipped with a
+warning if flask-sock is absent — the page then just shows its page-load snapshot):
 
 - **`/ws`** streams the live frame at the full tick rate. Each tick — **only while a
   browser is watching** (`LiveBus.active()`, so a normal show with no UI open adds nothing
-  to the render loop) — the DMX thread calls `_publish_live`, which packs **key
-  velocities** (the input, from `state.snapshot()`) and the **40 beam brightnesses** (the
+  to the render loop) — the DMX thread calls `_publish_live`. `active()` is a **ref-count
+  of connected `/ws` clients** (the handler calls `add_consumer()`/`remove_consumer()`
+  around its loop), *not* a "recently published" heuristic — so while a browser is
+  connected the thread publishes on **every** tick even through an idle spell, and a strike
+  after silence shows up at once (was B8: the old `_last_wait`-TTL gate went stale during
+  the WS handler's 10 s idle wait and the feed took up to 10 s to resume). `_publish_live`
+  packs **key velocities** (the input, from `state.snapshot()`) and the **40 beam
+  brightnesses** (the
   output, read back out of the just-rendered DMX frame so decay + effects are included)
   via `live.encode_frame` → a 74-byte message `[K][32 velocities][B][40 brightnesses]`. It
   posts to a `LiveBus` (`live.py`): a latest-frame condition-variable pub/sub that **drops
@@ -166,6 +173,32 @@ The header dot is a connection indicator (grey → red when `/ws` is open); both
 auto-reconnect after 1 s. The `LiveBus` is created in `__main__`, handed to both the
 `DmxThread` (publisher) and `create_app` (consumer). Works under `--dry-run` too, so the
 visualisation can be exercised without hardware.
+
+### Interactive input (R42)
+
+The viz is also an **input**: the page plays the same `KeyState` the MIDI thread drives,
+so a mouse/touch press is indistinguishable downstream from a physical key — decay, chord
+detection and effects all just work.
+
+- **Backend** is one small route, `POST /input`, body `{"keys":[idx,...], "down":bool,
+  "velocity":int}`. It calls `state.press(idx, velocity)` / `state.release(idx)` for each
+  index (those already guard the range); a chord is simply its constituent keys. Mouse has
+  no velocity, so the client sends a fixed medium-hard strike (`INPUT_VELOCITY = 100`).
+- **Key row** (`#keys .beam`, each tagged `data-i`): `pointerdown` captures the pointer and
+  strikes the key under it; `pointermove` while held slides the strike — **one key at a
+  time**, releasing the one left and striking the one entered (a glissando). `pointerup`/
+  `pointercancel` on `window` ends the drag and releases. The cells are full-height so the
+  hit target is the whole row (it no longer grows-on-press like the old bar viz).
+- **Chord row** (`.chord` buttons, built from `cfg.chords` in `render()` as `{idxs, name}`
+  — renamed off `keys`/`effect` to dodge Jinja resolving `chord.keys` to the dict's `.keys`
+  method): holding a button presses all its keys (lighting the chord's effect), releasing
+  or sliding off (`pointerleave`) releases them.
+- **Stuck-key safety:** a press that never gets its release (tab closed mid-drag) is
+  self-healing — a held key still decays to off in the renderer (R33), and physical play or
+  a reload clears the state — so no explicit server-side timeout is needed.
+
+There is **no new visualisation state**: the live `/ws` feed paints the pressed keys/beams
+back, so the click and the lit beam are the same round trip the MIDI path uses.
 
 ## How the QLC+ mapping works
 
