@@ -56,7 +56,7 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R30 | Q    | The standalone build shall survive interruption of network access: ArtNet send errors (network down/host unreachable) shall be caught and logged without stalling or crashing the render loop, and output shall resume automatically when the network returns. | M | G2 | ☐ |
 | R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☐ |
 | R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
-| R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on, the beam lights at full brightness and decays over time following an S-curve; MIDI velocity controls the decay duration (soft hit → fast decay, hard hit → slow decay, scaling over many seconds); on note-off the beam switches off immediately. | M | G2 | ☑ |
+| R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on, the beam lights at full brightness and decays over time following an exponential curve (configurable half-life; ~50% brightness ~1 s after a full-velocity strike); MIDI velocity controls the decay rate (soft hit → fast decay, hard hit → slow decay); on note-off the beam switches off immediately. | M | G2 | ☑ |
 | R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
 | R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☐ |
 | R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
@@ -78,12 +78,15 @@ Design home for R30–R31: the "Resilience" section in `reqs/G2.md`.
 (There is no committed automated test suite; verification is by use + `--dry-run`.)
 
 **R33 (simulated-piano decay).** Implemented: `state.py` stamps a monotonic onset on
-each strike; `decay.py` holds the closed-form S-curve (smootherstep over a finite,
-velocity-scaled duration → reaches exactly 0); `dmx_thread._render()` applies it per
-beam each tick. Bounds are `decay_min_s`/`decay_max_s` in config (0.3 s soft → 8 s
-hard). Verified via the render path (decay shape, instant note-off); on-hardware
-feel-tuning of the bounds is expected. R34–R37 (usage logging, web polish/graph,
-live WebSocket) remain ☐.
+each strike; `decay.py` holds the closed-form **exponential** curve (`master ·
+2^(−elapsed/half_life)`, naturally rounding to 0 in the tail); `dmx_thread._render()`
+applies it per beam each tick. The half-life scales with velocity between
+`half_life_min_s`/`half_life_max_s` in config (0.2 s soft → 1.0 s hard, i.e. ~50%
+brightness ~1 s after a full-velocity hit). Switched from the original smootherstep
+S-curve after on-hardware testing: the keyboard tends to fire full velocity, and the
+S-curve's flat top hid the decay — exponential reads as decaying immediately.
+On-hardware feel-tuning of the half-lives is expected. R34–R37 (usage logging, web
+polish/graph, live WebSocket) remain ☐.
 
 ## Bugs
 Deviations from a requirement. `Ref` = the requirement broken. All are in the **QLC+

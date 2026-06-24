@@ -5,8 +5,8 @@ On every tick it renders one DMX frame from the current key state and sends it a
 ArtNet. Render and send share the tick so the frame computed is the frame sent.
 
 Per-key beams use the simulated-piano decay (R33): a strike lights the beam at full
-brightness and it eases to off along an S-curve over a velocity-selected duration
-(see decay.py); note-off is immediate. Chord and full-keyboard effects are still
+brightness and it decays exponentially with a velocity-selected half-life (see
+decay.py); note-off is immediate. Chord and full-keyboard effects are still
 Milestone 2 — see render() TODOs.
 """
 
@@ -57,7 +57,7 @@ class DmxThread(threading.Thread):
             # velocity <= 0 case above (immediate off, no decay).
             brightness = decay.beam_brightness(
                 velocity, now - onset, cfg.master_brightness,
-                cfg.decay_min_s, cfg.decay_max_s)
+                cfg.half_life_min_s, cfg.half_life_max_s)
             if brightness <= 0:
                 continue  # fully decayed while held: beam off
             channel = fixtures.beam_channel(cfg, index)

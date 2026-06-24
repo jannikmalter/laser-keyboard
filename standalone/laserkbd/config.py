@@ -33,11 +33,12 @@ class Config:
     master_brightness: int = 255    # 0-255, global dimmer
 
     # --- Simulated-piano decay (R33) ----------------------------------------
-    # On note-on a beam lights at master_brightness and decays to off along an
-    # S-curve; MIDI velocity picks the decay duration between these bounds.
+    # On note-on a beam lights at master_brightness and decays exponentially toward
+    # off; MIDI velocity picks the decay half-life between these bounds (a hard hit
+    # lingers, a soft hit fades fast). 1.0 s == ~50% brightness 1 s after a full hit.
     # Note-off switches the beam off immediately (handled in the renderer).
-    decay_min_s: float = 0.3        # duration for the softest hit (velocity 1)
-    decay_max_s: float = 8.0        # duration for the hardest hit (velocity 127)
+    half_life_min_s: float = 0.2    # half-life for the softest hit (velocity 1)
+    half_life_max_s: float = 1.0    # half-life for the hardest hit (velocity 127)
 
     # --- Fixture mapping (the BeamBar addressing that used to live in QLC+) --
     bar_base_addresses: list[int] = field(default_factory=lambda: [0, 13, 26, 39])
