@@ -136,7 +136,9 @@ class DmxThread(threading.Thread):
 
             frame = self._render(cfg, time.monotonic())
             self._sender.send(self._target_ip(cfg), cfg.artnet_universe, frame)
-            if self._live is not None:
+            # Live viz (R37): only build/publish a frame while a browser is watching, so
+            # the feed adds nothing to the render loop during a normal show.
+            if self._live is not None and self._live.active():
                 self._publish_live(cfg, frame)
 
             now = time.perf_counter()

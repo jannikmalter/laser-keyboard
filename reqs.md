@@ -115,8 +115,18 @@ coalesces frames to display refresh via requestAnimationFrame, and identical fra
 dropped (`LiveBus.publish`) so an idle keyboard generates no traffic. The header dot is a
 live-connection indicator; both sockets auto-reconnect. Verified end-to-end against the
 running server (binary frames reflect a pressed key incl. its decayed beam brightness,
-log lines stream) and via `python -m laserkbd --dry-run`. **Not yet seen on the Pi's
-browser** against live hardware, but transport + render are confirmed locally.
+log lines stream) and via `python -m laserkbd --dry-run`.
+
+**Confirmed on the Pi (post-deploy):** the live feed works once **flask-sock is actually
+installed** — the first deploy failed to connect (`ws://…/ws` failed) purely because the
+package wasn't installed yet; `pip install -r requirements.txt` on the Pi is required.
+Two refinements after that: (1) `LiveBus.active()` gates the DMX-thread publish so the
+feed adds **zero** render-loop work unless a browser is watching (during a show it is
+idle); (2) it stays full tick-rate while watching (no throttle, by request). Open: a
+**residual laser flicker** persists — much reduced after the failed-WS reconnect spam was
+fixed, but still visible. Cause not yet isolated; the `active()` gate gives a clean test
+(flicker with the browser closed ⇒ not the live feed, look to 100 Hz ArtNet rate / node /
+effects). Tracked as **B7**.
 
 **R38–R41 (standalone chords + effects).** Milestone 2's first slice: bring chord
 handling — present in the QLC+ build as R8–R11 — into the standalone build, plus a
@@ -138,9 +148,9 @@ until confirmed on hardware (as R33 was). NOTE: because effects address all 40 b
 the ArtNet node must forward ≥52 channels (up from the key-only ~44).
 
 ## Bugs
-Deviations from a requirement. `Ref` = the requirement broken. All are in the **QLC+
+Deviations from a requirement. `Ref` = the requirement broken. B1–B6 are in the **QLC+
 build** (`qlcplus/laserkeyboard.py`); the standalone build (R16) fixes this class by
-design but does not close them in the QLC+ build.
+design but does not close them in the QLC+ build. B7+ are standalone-build bugs.
 
 | ID | Bug                                                                                  | Ref | Sev | Done |
 |----|--------------------------------------------------------------------------------------|-----|-----|------|
@@ -150,6 +160,7 @@ design but does not close them in the QLC+ build.
 | B4 | Hardwired to MIDI channel 7: status bytes `150`/`134` only match channel 7; should mask the channel (`status & 0xF0 == 0x90` / `0x80`). `qlcplus/laserkeyboard.py:46` | R1 | Md | ☐ |
 | B5 | Bare `except: pass` hides all errors, masking B1–B4; should at least log. `qlcplus/laserkeyboard.py:75-76` | R5 | Lo | ☐ |
 | B6 | Connection check doesn't detect disconnects: `get_port_name(port)` returns a name by index even after the device is unplugged/reindexed, so auto-reconnect is largely cosmetic. `qlcplus/laserkeyboard.py:90`, `:107` | R3 | Md | ☐ |
+| B7 | Residual laser flicker (standalone) on the Pi. Much reduced after the failed-WS reconnect spam stopped, but still visible. Cause not isolated — candidates: 100 Hz ArtNet too fast for the node/bars, live-feed GIL contention while a browser watches, or the chord effects. Diagnostic: with the browser closed (`LiveBus.active()` False → no live-feed work) does it still flicker? | R18 | Md | ☐ |
 
 ---
 *Pri:* M/S/C (must/should/could). *Sev:* Hi/Md/Lo. IDs are permanent — never reuse.

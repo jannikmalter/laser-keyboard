@@ -146,16 +146,17 @@ The page shows two live strips: a **32-key input row** (lit when a key is held) 
 over two WebSockets, registered via **flask-sock** in `_register_websockets` (skipped
 with a warning if flask-sock is absent — the page then just shows its page-load snapshot):
 
-- **`/ws`** streams the live frame. Every tick the DMX thread calls `_publish_live`,
-  which packs **key velocities** (the input, from `state.snapshot()`) and the **40 beam
-  brightnesses** (the output, read back out of the just-rendered DMX frame so decay +
-  effects are included) via `live.encode_frame` → a 74-byte message
-  `[K][32 velocities][B][40 brightnesses]`. It posts to a `LiveBus` (`live.py`): a
-  latest-frame condition-variable pub/sub that **drops identical frames** (an idle
-  keyboard → no traffic) and wakes the WS handler, which sends on change (and resends as
-  a keepalive every 10 s so a dead client is noticed). At 100 Hz this is ~7 kB/s — far
-  below ArtNet. The browser keeps only the newest frame and paints it on
-  `requestAnimationFrame`, decoupling the 100 Hz stream from the ~60 Hz display.
+- **`/ws`** streams the live frame at the full tick rate. Each tick — **only while a
+  browser is watching** (`LiveBus.active()`, so a normal show with no UI open adds nothing
+  to the render loop) — the DMX thread calls `_publish_live`, which packs **key
+  velocities** (the input, from `state.snapshot()`) and the **40 beam brightnesses** (the
+  output, read back out of the just-rendered DMX frame so decay + effects are included)
+  via `live.encode_frame` → a 74-byte message `[K][32 velocities][B][40 brightnesses]`. It
+  posts to a `LiveBus` (`live.py`): a latest-frame condition-variable pub/sub that **drops
+  identical frames** (an idle keyboard → no traffic) and wakes the WS handler, which sends
+  on change (and resends as a keepalive every 10 s so a dead client is noticed). At 100 Hz
+  this is ~7 kB/s — far below ArtNet. The browser keeps only the newest frame and paints
+  it on `requestAnimationFrame`, decoupling the tick rate from the ~60 Hz display.
 - **`/logs`** streams new log lines as JSON. `RingBufferHandler` (`log_buffer.py`) gained
   a monotonic counter + a blocking `wait_since(last_total, timeout)`; the page renders the
   backlog server-side and the socket appends lines emitted after connect (auto-scrolls if
