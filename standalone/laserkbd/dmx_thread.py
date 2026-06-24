@@ -4,8 +4,10 @@ A free-running monotonic deadline loop ticks at config.tick_hz (target ~100 Hz).
 On every tick it renders one DMX frame from the current key state and sends it as
 ArtNet. Render and send share the tick so the frame computed is the frame sent.
 
-Milestone 1 renders per-key beams only (on/off scaled by master brightness). Chord
-and full-keyboard effects are Milestone 2 — see render() TODOs.
+Per-key beams use the simulated-piano decay (R33): a strike lights the beam at full
+brightness and it eases to off along an S-curve over a velocity-selected duration
+(see decay.py); note-off is immediate. Chord and full-keyboard effects are still
+Milestone 2 — see render() TODOs.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import logging
 import threading
 import time
 
-from . import fixtures
+from . import decay, fixtures
 from .artnet import ArtNetSender
 from .config import Config, ConfigHolder
 from .state import KeyState
@@ -32,8 +34,13 @@ class DmxThread(threading.Thread):
         self._dry_run = dry_run
         self._sender = ArtNetSender(dry_run=dry_run)
 
-    def _render(self, cfg: Config) -> bytes:
-        """Map held keys onto beam channels. Returns the DMX byte frame."""
+    def _render(self, cfg: Config, now: float) -> bytes:
+        """Map held keys onto beam channels. Returns the DMX byte frame.
+
+        `now` is a time.monotonic() reading, the same clock KeyState stamps onsets
+        with, so elapsed = now - onset drives the decay curve (R33). The frame is a
+        fresh zeroed buffer each tick: a released or fully-decayed beam is simply not
+        written, so it is off — values do not persist between frames."""
         frame = bytearray(fixtures.universe_size(cfg))
 
         # Put every bar into per-beam DMX mode (channel 1 = 200-255), otherwise the
@@ -42,15 +49,20 @@ class DmxThread(threading.Thread):
             if base < len(frame):
                 frame[base] = fixtures.DMX_MODE_PER_BEAM
 
-        velocities = self._state.snapshot()
-        for index, velocity in enumerate(velocities):
+        for index, (velocity, onset) in enumerate(self._state.snapshot()):
             if velocity <= 0:
-                continue
+                continue  # released: leave the channel at 0 (beam off)
+            # Simulated-piano decay (R33): full brightness at the strike, easing to
+            # off along an S-curve over a velocity-selected duration. Note-off is the
+            # velocity <= 0 case above (immediate off, no decay).
+            brightness = decay.beam_brightness(
+                velocity, now - onset, cfg.master_brightness,
+                cfg.decay_min_s, cfg.decay_max_s)
+            if brightness <= 0:
+                continue  # fully decayed while held: beam off
             channel = fixtures.beam_channel(cfg, index)
             if channel is not None and channel < len(frame):
-                # Milestone 1: simple on/off at master brightness.
-                # TODO(milestone-2): velocity-/effect-driven brightness curves.
-                frame[channel] = cfg.master_brightness
+                frame[channel] = brightness
 
         # TODO(milestone-2): overlay chord-triggered effects here.
         # TODO(milestone-2): overlay full-keyboard (held_count >= 12) bonus effect.
@@ -69,7 +81,7 @@ class DmxThread(threading.Thread):
             cfg = self._config.get()
             period = 1.0 / max(1.0, cfg.tick_hz)
 
-            frame = self._render(cfg)
+            frame = self._render(cfg, time.monotonic())
             self._sender.send(self._target_ip(cfg), cfg.artnet_universe, frame)
 
             now = time.perf_counter()

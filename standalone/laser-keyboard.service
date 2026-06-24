@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Adjust User and paths to match your Pi install.
+# User and paths match the appliance install; adjust if you deploy elsewhere.
+# A User= that doesn't exist on the host fails at boot with status=217/USER.
 User=lichtfetisch
 WorkingDirectory=/home/lichtfetisch/laser-keyboard/standalone
 ExecStart=/home/lichtfetisch/laser-keyboard/standalone/.venv/bin/python -m laserkbd

@@ -65,6 +65,33 @@ python3-dev`); without them `pip install` fails with `Dependency "alsa" not foun
 Not needed for `--dry-run` (rtmidi isn't imported) or on Windows (prebuilt wheels).
 This is a setup prerequisite for R27 (run on the Pi); see `standalone/README.md`.
 
+## How the standalone render works
+
+The render loop in `dmx_thread._render()` rebuilds a **fresh zeroed** DMX frame every
+tick, so a beam is lit only if it is written this tick — released beams fall to off
+with no per-frame persistence. Each tick it sets every active bar's channel 1 to
+per-beam mode (see the BeamBar note below), then drives the per-key beams via the
+**simulated-piano decay** (R33):
+
+- `state.py` stores, per key, the held velocity (`0` = released) **and** a
+  `time.monotonic()` onset stamped on each strike (re-pressing a held key resets the
+  onset → re-struck string). Velocity and onset are snapshotted together under one
+  lock so the renderer never pairs mismatched values.
+- `decay.py` is the pure curve: brightness `= master · (1 − smootherstep(elapsed /
+  duration))`, where `duration` scales linearly with velocity between
+  `decay_min_s` and `decay_max_s`. Smootherstep over a **finite** duration is an
+  S-curve that reaches exactly 0, so the beam truly goes dark; it's evaluated
+  closed-form each tick (no integrated state), making it jitter-proof and instantly
+  responsive to a live config change. (This is a stylized look — a real piano string
+  decays exponentially, the opposite shape near t=0 — but R33 specifies an S-curve.)
+- **Note-off is immediate:** release sets velocity to 0, and the renderer skips
+  velocity-0 keys, so the beam switches off at once regardless of the decay. A key
+  held past its full decay also reads 0 (the string went silent while held).
+
+The `now` passed into `_render()` is a `time.monotonic()` reading from the loop —
+the same clock `state.py` stamps onsets with, so `elapsed = now − onset` is correct
+and immune to wall-clock jumps.
+
 ## How the QLC+ mapping works
 
 - **Note offset:** incoming notes are shifted by `-41` so the playable range becomes

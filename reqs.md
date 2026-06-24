@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-06-24
+Status: Active · Updated: 2026-06-24 (R33–R37 added)
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -13,8 +13,6 @@ Why this exists. Everything below traces to one of these.
 ## Out of scope
 What this deliberately will *not* do (stops scope creep).
 
-- Velocity sensitivity — velocity is discarded (always forwards 127). Acceptable
-  while beams are on/off only. (by design)
 - Hard real-time timing measures (PREEMPT_RT kernel, `isolcpus`, core pinning) —
   out of scope unless timing problems actually appear; the jitter budget is generous.
 - Effects in the standalone build's Milestone 1 — deferred to Milestone 2 (see `todo.md`).
@@ -52,26 +50,40 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R24 | F    | The Flask web interface shall provide a live log view and a settings editor.         | M   | G2   | ☑    |
 | R25 | F    | The system shall provide a dry-run mode (`--dry-run`): simulated keyboard + suppressed ArtNet, for testing the web UI without hardware. | S | G2 | ☑ |
 | R26 | C    | Settings shall persist across restarts (config file on disk).                        | S   | G2   | ☑    |
-| R27 | C    | The system shall run on boot as a systemd service (`laser-keyboard.service`) with MIDI auto-reconnect. | S | G2 | ☐ |
+| R27 | C    | The system shall run on boot as a systemd service (`laser-keyboard.service`) with MIDI auto-reconnect. | S | G2 | ☑ |
 | R28 | F    | The system shall shut all threads down cleanly on stop (SIGINT/SIGTERM → stop event → join). | M | G2 | ☑ |
-| R29 | Q    | The standalone build shall survive a USB disconnect of the MIDI keyboard: the MIDI thread shall catch the disconnect without crashing the process, release held key state so no beam stays stuck on, and auto-reconnect (by name) when the keyboard is replugged. | M | G2 | ☐ |
+| R29 | Q    | The standalone build shall survive a USB disconnect of the MIDI keyboard: the MIDI thread shall catch the disconnect without crashing the process, release held key state so no beam stays stuck on, and auto-reconnect (by name) when the keyboard is replugged. | M | G2 | ☑ |
 | R30 | Q    | The standalone build shall survive interruption of network access: ArtNet send errors (network down/host unreachable) shall be caught and logged without stalling or crashing the render loop, and output shall resume automatically when the network returns. | M | G2 | ☐ |
 | R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☐ |
 | R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
+| R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on, the beam lights at full brightness and decays over time following an S-curve; MIDI velocity controls the decay duration (soft hit → fast decay, hard hit → slow decay, scaling over many seconds); on note-off the beam switches off immediately. | M | G2 | ☑ |
+| R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
+| R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☐ |
+| R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
+| R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time, and the log view shall stream new entries as they arrive. | C | G2 | ☐ |
 
 **Standalone status note (R15–R32).** Milestone 1 was validated on real hardware
 (Pi + keyboard + ArtNet node + BeamBar 10R) on 2026-06-24: keys drive the correct
 beams, including the channel-1 per-beam mode fix (R23), with both unicast and broadcast
 output (R20), a >44 Hz tick (R19), ArtPoll discovery (R22) and clean shutdown (R28).
-R15–R26, R28 and R32 are ☑. Still open:
-- **R27** — run on boot via the systemd unit; not yet tested on the Pi.
-- **R29** — survive USB keyboard unplug: **implemented** (`midi_thread` detects the
-  unplug via a port-list check that doesn't trust `is_port_open()`, releases all held
-  keys so no beam sticks on, and auto-reconnects by name), verified in simulation; ☐
-  pending a real unplug test on the Pi.
-- **R30–R31** — resilience (network interruption, power loss); not yet implemented.
-  Design home: the "Resilience" section in `reqs/G2.md`.
+R15–R29 and R32 are ☑ — the appliance now also runs on boot via systemd (R27,
+validated after fixing the unit's `User=`) and survives a USB keyboard unplug (R29,
+validated by a real unplug: laser switched off, then reconnected). Still open:
+- **R30** — survive network interruption. ArtNet send errors are already caught in
+  `artnet.ArtNetSender.send` (logged, loop keeps ticking), but this is not yet
+  validated by actually downing the network/node.
+- **R31** — survive power loss. Both mechanisms exist (atomic config write R26 ☑ +
+  systemd auto-start R27 ☑); needs a pull-the-plug confirmation that it resumes clean.
+Design home for R30–R31: the "Resilience" section in `reqs/G2.md`.
 (There is no committed automated test suite; verification is by use + `--dry-run`.)
+
+**R33 (simulated-piano decay).** Implemented: `state.py` stamps a monotonic onset on
+each strike; `decay.py` holds the closed-form S-curve (smootherstep over a finite,
+velocity-scaled duration → reaches exactly 0); `dmx_thread._render()` applies it per
+beam each tick. Bounds are `decay_min_s`/`decay_max_s` in config (0.3 s soft → 8 s
+hard). Verified via the render path (decay shape, instant note-off); on-hardware
+feel-tuning of the bounds is expected. R34–R37 (usage logging, web polish/graph,
+live WebSocket) remain ☐.
 
 ## Bugs
 Deviations from a requirement. `Ref` = the requirement broken. All are in the **QLC+
