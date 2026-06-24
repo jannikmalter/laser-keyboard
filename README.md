@@ -9,7 +9,7 @@ The project comes in two flavours:
 | Version | Where it runs | Output | Status |
 |---------|---------------|--------|--------|
 | **[`qlcplus/`](qlcplus/)** | A PC next to the rig | MIDI → [QLC+](https://www.qlcplus.org/) → DMX/USB | Working, in use |
-| **[`standalone/`](standalone/)** | A Raspberry Pi inside the keyboard | MIDI → ArtNet (no PC, no QLC+) | In development (Milestone 1) |
+| **[`standalone/`](standalone/)** | A Raspberry Pi inside the keyboard | MIDI → ArtNet (no PC, no QLC+) | Milestone 1 complete (on hardware); effects next |
 
 ## The two builds
 

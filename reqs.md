@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-06-24 (R33–R37 added)
+Status: Active · Updated: 2026-06-24 (R38–R41 added: standalone chords + effects)
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -53,29 +53,34 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R27 | C    | The system shall run on boot as a systemd service (`laser-keyboard.service`) with MIDI auto-reconnect. | S | G2 | ☑ |
 | R28 | F    | The system shall shut all threads down cleanly on stop (SIGINT/SIGTERM → stop event → join). | M | G2 | ☑ |
 | R29 | Q    | The standalone build shall survive a USB disconnect of the MIDI keyboard: the MIDI thread shall catch the disconnect without crashing the process, release held key state so no beam stays stuck on, and auto-reconnect (by name) when the keyboard is replugged. | M | G2 | ☑ |
-| R30 | Q    | The standalone build shall survive interruption of network access: ArtNet send errors (network down/host unreachable) shall be caught and logged without stalling or crashing the render loop, and output shall resume automatically when the network returns. | M | G2 | ☐ |
-| R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☐ |
+| R30 | Q    | The standalone build shall survive interruption of network access: ArtNet send errors (network down/host unreachable) shall be caught and logged without stalling or crashing the render loop, and output shall resume automatically when the network returns. | M | G2 | ☑ |
+| R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☑ |
 | R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
 | R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on the beam lights at full brightness and decays over time; the decay shape (linear or exponential) and its per-velocity time bounds (`t_min`/`t_max`) shall be selectable in the web UI and persisted (R24/R26); MIDI velocity controls the decay time (soft hit → fast decay, hard hit → slow decay); on note-off the beam switches off immediately. | M | G2 | ☑ |
 | R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
 | R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☐ |
 | R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
 | R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time, and the log view shall stream new entries as they arrive. | C | G2 | ☐ |
+| R38 | F    | The standalone build shall detect chords — configured sets of key indices recognised as triggered when all their keys are held simultaneously (the standalone counterpart to R8/R9), evaluated from key state on each DMX tick with edge detection (trigger on completion, clear on release). | S | G2 | ☐ |
+| R39 | F    | The standalone build shall provide a chord-triggered effects engine: a recognised chord (R38) activates a named effect that the DMX thread renders over all 40 beams (4 bars × 10), composited with the per-key beams; the effect deactivates when the chord is released. Effects are closed-form animations driven by elapsed time since trigger (like `decay.py`), so the renderer stays stateless. | S | G2 | ☐ |
+| R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☐ |
+| R41 | F    | The effects engine shall provide a "left-right wave" effect: while active, beams light in quick succession left→right→left, each beam fading with a decay tuned so it is nearly fully decayed by the time the sweep returns to it. | C | G2 | ☐ |
 
 **Standalone status note (R15–R32).** Milestone 1 was validated on real hardware
 (Pi + keyboard + ArtNet node + BeamBar 10R) on 2026-06-24: keys drive the correct
 beams, including the channel-1 per-beam mode fix (R23), with both unicast and broadcast
 output (R20), a >44 Hz tick (R19), ArtPoll discovery (R22) and clean shutdown (R28).
-R15–R29 and R32 are ☑ — the appliance now also runs on boot via systemd (R27,
-validated after fixing the unit's `User=`) and survives a USB keyboard unplug (R29,
-validated by a real unplug: laser switched off, then reconnected). Still open:
-- **R30** — survive network interruption. ArtNet send errors are already caught in
-  `artnet.ArtNetSender.send` (logged, loop keeps ticking), but this is not yet
-  validated by actually downing the network/node.
-- **R31** — survive power loss. Both mechanisms exist (atomic config write R26 ☑ +
-  systemd auto-start R27 ☑); needs a pull-the-plug confirmation that it resumes clean.
-Design home for R30–R31: the "Resilience" section in `reqs/G2.md`.
-(There is no committed automated test suite; verification is by use + `--dry-run`.)
+R15–R32 are all ☑ — the appliance runs on boot via systemd (R27, validated after
+fixing the unit's `User=`), survives a USB keyboard unplug (R29, validated by a real
+unplug: laser switched off, then reconnected), and survives loss of the PoE cable
+(R30 + R31, validated 2026-06-24). Because the Pi is PoE-powered, pulling the one
+network cable cuts power and network together: ArtNet send errors are caught in
+`artnet.ArtNetSender.send` so the render loop keeps ticking, and on replug the unit
+boots unattended and resumes with an intact (atomically written) config. Milestone 1
+is therefore complete; remaining standalone work is Milestone 2 (effects) plus the
+new R34–R37. Design home for the resilience items: the "Resilience" section in
+`reqs/G2.md`. (There is no committed automated test suite; verification is by use +
+`--dry-run`.)
 
 **R33 (simulated-piano decay).** Implemented: `state.py` stamps a monotonic onset on
 each strike; `decay.py` holds the closed-form curve; `dmx_thread._render()` applies
@@ -86,8 +91,27 @@ it per beam each tick. The shape is selectable via `decay_mode` (`"exponential"`
 half-life, so ~50% brightness ~1 s after a full-velocity hit). All three are editable
 in the web UI and persisted. We started with a smootherstep S-curve but dropped it
 after on-hardware testing — the keyboard tends to fire full velocity and the S-curve's
-flat top hid the decay. On-hardware feel-tuning of the times is expected. R34–R37
-(usage logging, web polish/graph, live WebSocket) remain ☐.
+flat top hid the decay. **Confirmed working on hardware (2026-06-24)** in exponential
+mode. R34–R37 (usage logging, web polish/graph, live WebSocket) remain ☐.
+
+**R38–R41 (standalone chords + effects).** Milestone 2's first slice: bring chord
+handling — present in the QLC+ build as R8–R11 — into the standalone build, plus a
+small effects engine and the first two effects (laser lightning, left-right wave).
+Design home: the "Milestone 2 — effects" section in `reqs/G2.md`, which also covers
+how effects address the full 40-beam array (vs. the 32 playable keys), how they
+composite with per-key beams, and the open decisions (chord definitions, chord→effect
+mapping, web-UI exposure). The full-keyboard (12+ keys) bonus (QLC+ R11) is a
+later slice and stays a `todo.md` item for now.
+
+**Implemented (2026-06-24), pending hardware confirmation.** `effects.py` (closed-form
+lightning + wave), `config.chords` + effect params, `fixtures.all_beam_channels` /
+`all_bar_bases` (full 40-beam addressing) + a widened `universe_size`, and
+`DmxThread._update_chords` / `_overlay_effects` (edge-detected chords, max-composite
+overlay). The four numeric effect params are live-editable in the web UI; the chord→effect
+map is `config.json`-only for now. Verified by dry simulation (chord trigger/clear edges,
+both effects' output, frame compositing); **not yet run on the Pi + bars** — boxes stay ☐
+until confirmed on hardware (as R33 was). NOTE: because effects address all 40 beams,
+the ArtNet node must forward ≥52 channels (up from the key-only ~44).
 
 ## Bugs
 Deviations from a requirement. `Ref` = the requirement broken. All are in the **QLC+

@@ -42,6 +42,22 @@ class Config:
     # `t` meaning per mode: exponential -> half-life (1.0 s == ~50% after 1 s);
     # linear -> full fade duration (brightness reaches 0 at elapsed == t).
 
+    # --- Chord-triggered effects (R38-R41) ----------------------------------
+    # Each chord is a set of key indices that, held together, trigger a named effect
+    # (see effects.py: "lightning" | "wave"). Kept as data so the mapping can move to
+    # the web UI later. Defaults reuse two QLC+ chord shapes (F1, A1).
+    chords: list[dict] = field(default_factory=lambda: [
+        {"keys": [0, 4, 7], "effect": "lightning"},
+        {"keys": [4, 8, 11], "effect": "wave"},
+    ])
+    # Laser lightning (R40): all 40 beams flash on/off at random.
+    lightning_flash_hz: float = 20.0     # re-randomise rate, decoupled from tick_hz
+    lightning_on_fraction: float = 0.5   # fraction of beams lit per flash (0..1)
+    # Left-right wave (R41): head sweeps 0->max->0 leaving a decaying trail. A decay
+    # time ~ the sweep period leaves a beam nearly off by the time the head returns.
+    wave_period_s: float = 1.4           # one full left->right->left sweep
+    wave_decay_s: float = 1.4            # per-beam fade time
+
     # --- Fixture mapping (the BeamBar addressing that used to live in QLC+) --
     bar_base_addresses: list[int] = field(default_factory=lambda: [0, 13, 26, 39])
     beams_per_bar: int = 10

@@ -5,8 +5,10 @@ the keyboard enclosure and emits **ArtNet** directly — no PC, no QLC+, no loop
 The keyboard connects to the Pi over USB; the unit reaches the rig over one network
 cable (PoE). See [`../reqs.md`](../reqs.md) for the full requirements and roadmap.
 
-> **Status: scaffolding.** Milestone 1 (per-key beams over ArtNet) is wired up and
-> runnable. Chord and full-keyboard effects are Milestone 2 and currently stubbed
+> **Status: Milestone 1 complete (validated on hardware).** Per-key beams over ArtNet
+> — including the simulated-piano decay (R33) and the resilience cases (USB unplug,
+> plus network/power loss via the PoE cable) — are validated on a Pi + BeamBar rig.
+> Chord and full-keyboard effects are Milestone 2 and currently stubbed
 > (`TODO(milestone-2)` in `dmx_thread.py`).
 
 ## Architecture
@@ -22,7 +24,7 @@ Three threads share state (`laserkbd/`):
 | `midi_thread.py` | MIDI | read the keyboard, update `KeyState` |
 | `dmx_thread.py`  | DMX  | render a DMX frame from `KeyState`, send ArtNet on a ~100 Hz tick |
 | `web.py`         | web  | Flask UI: settings, MIDI + ArtPoll device scan, logs |
-| `config.py` · `state.py` · `fixtures.py` · `artnet.py` · `log_buffer.py` | — | shared support |
+| `config.py` · `state.py` · `fixtures.py` · `decay.py` · `artnet.py` · `log_buffer.py` · `sim.py` | — | shared support |
 
 ## System dependencies (Linux / Raspberry Pi)
 
@@ -84,6 +86,10 @@ defaults). Key ones:
   Use the web UI's *ArtPoll & scan* button to discover nodes and pick one.
 - **Tick rate** — `tick_hz` (default 100). Can exceed 44 Hz because the node forwards
   a reduced channel count.
+- **Beam behaviour** — `master_brightness` (global dimmer), plus the simulated-piano
+  decay: `decay_mode` (`exponential`/`linear`) with `decay_t_min_s`/`decay_t_max_s`,
+  the per-velocity decay time (soft hit → min, hard hit → max; for exponential `t` is
+  the half-life). All editable in the web UI.
 - **Fixture mapping** — `bar_base_addresses` (default `[0,13,26,39]`),
   `beams_per_bar`, `beam_channel_offset` — the BeamBar addressing that used to live
   in the QLC+ workspace.

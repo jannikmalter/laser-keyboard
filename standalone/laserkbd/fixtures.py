@@ -42,16 +42,35 @@ def active_bar_bases(cfg: Config) -> list[int]:
     return sorted(bases)
 
 
+def all_beam_channels(cfg: Config) -> list[int]:
+    """Every beam's DMX channel across all bars, left to right (bar 0 beams 0..9, bar 1
+    beams 0..9, ...). Chord effects (R39-R41) light all 40 beams, not just the
+    `key_count` (32) playable keys, so they index into this rather than beam_channel()."""
+    chans: list[int] = []
+    for base in cfg.bar_base_addresses:
+        for beam in range(cfg.beams_per_bar):
+            chans.append(base + cfg.beam_channel_offset + beam)
+    return chans
+
+
+def all_bar_bases(cfg: Config) -> list[int]:
+    """Channel-1 (mode) index of every bar. An active effect can light any bar, so all
+    of them must be driven to DMX_MODE_PER_BEAM (not just the key-mapped ones)."""
+    return list(cfg.bar_base_addresses)
+
+
 def universe_size(cfg: Config) -> int:
     """Highest channel we address, rounded up to an even byte count. The special
     ArtNet node can be told to forward fewer than 512 channels (which is what lets
-    the tick rate exceed 44 Hz), so we send only as many channels as we use."""
+    the tick rate exceed 44 Hz), so we send only as many channels as we use.
+
+    Covers all 40 beams (not just the playable keys): chord effects address the whole
+    array, so the frame must be wide enough for every bar's beams. NOTE: this means the
+    ArtNet node must be configured to forward at least this many channels."""
     highest = 0
-    for key in range(cfg.key_count):
-        ch = beam_channel(cfg, key)
-        if ch is not None:
-            highest = max(highest, ch + 1)
-    for base in active_bar_bases(cfg):  # channel 1 of each bar must fit too
+    for ch in all_beam_channels(cfg):
+        highest = max(highest, ch + 1)
+    for base in all_bar_bases(cfg):  # channel 1 of each bar must fit too
         highest = max(highest, base + 1)
     # ArtNet wants an even length; clamp to the 512-channel DMX maximum.
     size = highest + (highest % 2)

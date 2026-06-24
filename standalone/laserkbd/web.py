@@ -32,6 +32,10 @@ _EDITABLE = {
     "decay_mode": str,
     "decay_t_min_s": float,
     "decay_t_max_s": float,
+    "lightning_flash_hz": float,
+    "lightning_on_fraction": float,
+    "wave_period_s": float,
+    "wave_decay_s": float,
     "log_level": str,
 }
 

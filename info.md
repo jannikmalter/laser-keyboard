@@ -97,6 +97,43 @@ The `now` passed into `_render()` is a `time.monotonic()` reading from the loop 
 the same clock `state.py` stamps onsets with, so `elapsed = now − onset` is correct
 and immune to wall-clock jumps.
 
+## Chord-triggered effects (R38–R41)
+
+After the per-key beams, `_render()` overlays **chord-triggered effects** — the
+standalone counterpart to the QLC+ chord handling, but rendered in Python.
+
+- **Detection (`_update_chords`).** `config.chords` is a list of
+  `{"keys": [...], "effect": name}` entries. Each tick the renderer builds the set of
+  held keys (velocity > 0) and edge-detects: a chord whose keys are all held and that
+  wasn't active gets stamped with the current monotonic time in
+  `DmxThread._active_chords` (chord index → trigger time); a chord that's no longer
+  fully held is dropped. That trigger time is **the only effect state the DMX thread
+  keeps** — the effects themselves are closed-form over `now − trigger`. A live config
+  edit that shrinks the list prunes now-stale indices.
+- **Effects (`effects.py`).** Like `decay.py`, each effect is a pure function of
+  elapsed time → a per-beam brightness array over **all 40 beams** (4 bars × 10), not
+  just the 32 playable keys. `effects.render(name, elapsed, beam_count, cfg)` dispatches:
+  - **`"lightning"`** (R40): all beams flash on/off at random. RNG is seeded by the
+    flash-window index `int(elapsed · lightning_flash_hz)`, so the pattern is fixed
+    within one flash and identical regardless of `tick_hz`. `lightning_on_fraction`
+    sets how many beams are lit per flash.
+  - **`"wave"`** (R41): a triangle "head" sweeps beam 0 → max → 0 over `wave_period_s`,
+    each beam fading exponentially since the head last passed it. Both passes per cycle
+    (rightward at phase `f/2`, leftward at `1 − f/2`) are computed closed-form, so the
+    trailing comet is exact; `wave_decay_s ≈ wave_period_s` leaves a beam nearly off by
+    the time the head returns.
+- **Overlay (`_overlay_effects`).** Effects can light any bar, so it drives **all**
+  bars' channel 1 to per-beam mode (`fixtures.all_bar_bases`) and writes onto the full
+  beam set (`fixtures.all_beam_channels`). It **max-composites** per channel, so a held
+  per-key beam still reads through a sparse effect. Because effects address all 40
+  beams, `fixtures.universe_size()` now spans every beam (≈52 channels) — the ArtNet
+  node must be configured to forward at least that many channels.
+- **Config / web UI.** `chords` (the chord→effect map) lives in `config.json` only for
+  now; the numeric effect params (`lightning_flash_hz`, `lightning_on_fraction`,
+  `wave_period_s`, `wave_decay_s`) are in the web settings editor and persisted, so the
+  look can be tuned live on hardware. The full-keyboard (12+ keys) bonus is not built
+  yet (`TODO(milestone-2)` in `_render`).
+
 ## How the QLC+ mapping works
 
 - **Note offset:** incoming notes are shifted by `-41` so the playable range becomes
