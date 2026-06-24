@@ -20,7 +20,11 @@ Work items. Reference the ID they advance.
       status strip, live beam strip, and grouped/labelled settings sections in web.py;
       verified via flask test client (render + settings round-trip). (R35)
 - [ ] Web UI keypresses-per-minute graph (time-series, drawn from R34 log). (R36)
-- [ ] Live WebSocket feed: push key/laser state and log stream to the browser. (R37)
+- [x] Live WebSocket feed: push key/laser state and log stream to the browser. Done —
+      LiveBus (live.py) + per-tick 74-byte frames from dmx_thread; /ws (binary key+laser
+      frames) and /logs (JSON lines) via flask-sock; page paints 32-key + 40-beam rows on
+      requestAnimationFrame and auto-reconnects. Verified end-to-end locally; not yet seen
+      on the Pi browser with live bars. (R37)
 - [ ] Chord detection: edge-detected, evaluated each DMX tick from KeyState; active
       chords held in the DMX thread (standalone counterpart to QLC+ R8/R9). (R38)
 - [ ] Effects engine: whole-40-beam channel enumeration + drive all 4 bars' channel 1

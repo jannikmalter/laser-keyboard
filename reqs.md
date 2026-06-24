@@ -60,7 +60,7 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
 | R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☑ |
 | R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
-| R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time, and the log view shall stream new entries as they arrive. | C | G2 | ☐ |
+| R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time (a 32-key input row + a 40-beam laser output row), and the log view shall stream new entries as they arrive. | C | G2 | ☑ |
 | R38 | F    | The standalone build shall detect chords — configured sets of key indices recognised as triggered when all their keys are held simultaneously (the standalone counterpart to R8/R9), evaluated from key state on each DMX tick with edge detection (trigger on completion, clear on release). | S | G2 | ☐ |
 | R39 | F    | The standalone build shall provide a chord-triggered effects engine: a recognised chord (R38) activates a named effect that the DMX thread renders over all 40 beams (4 bars × 10), composited with the per-key beams; the effect deactivates when the chord is released. Effects are closed-form animations driven by elapsed time since trigger (like `decay.py`), so the renderer stays stateless. | S | G2 | ☐ |
 | R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☐ |
@@ -92,7 +92,7 @@ half-life, so ~50% brightness ~1 s after a full-velocity hit). All three are edi
 in the web UI and persisted. We started with a smootherstep S-curve but dropped it
 after on-hardware testing — the keyboard tends to fire full velocity and the S-curve's
 flat top hid the decay. **Confirmed working on hardware (2026-06-24)** in exponential
-mode. R34, R36, R37 (usage logging, web graph, live WebSocket) remain ☐.
+mode. R34, R36 (usage logging, web keypress graph) remain ☐.
 
 **R35 (web UI visual polish).** Done: `web.py` rewritten as a themed dark single page
 (laser-red accent) — status strip, a live beam strip (per-key snapshot at page load),
@@ -100,7 +100,23 @@ and the settings form regrouped into labelled sections (MIDI / ArtNet / Brightne
 decay / Chord effects / Logging) with human labels + unit hints replacing the raw
 field names. Routes and form field names are unchanged; verified by rendering under
 `flask` test client (page renders, lit beams match held keys, settings POST
-round-trips). Still server-rendered, no JS — live push stays R37.
+round-trips).
+
+**R37 (live WebSocket feed).** Done: the visualisation went live. Two strips on the
+page — a 32-key input row (kept from R35) and a new 40-beam laser-output row (red dots,
+brightness driven live). The DMX thread publishes a tiny 74-byte frame each tick
+(`[K][32 key velocities][B][40 beam brightnesses]`, beams read back out of the rendered
+DMX frame so decay + effects show) to a `LiveBus` (`live.py`); the web thread streams it
+over a `/ws` WebSocket. A second `/logs` WebSocket streams new log lines as JSON
+(`log_buffer.py` gained a counter + blocking `wait_since`). Both use **flask-sock**
+(added to requirements; routes skipped + page degrades gracefully if absent). The frame
+stream is full tick-rate but ~7 kB/s at 100 Hz — a fraction of ArtNet; the browser
+coalesces frames to display refresh via requestAnimationFrame, and identical frames are
+dropped (`LiveBus.publish`) so an idle keyboard generates no traffic. The header dot is a
+live-connection indicator; both sockets auto-reconnect. Verified end-to-end against the
+running server (binary frames reflect a pressed key incl. its decayed beam brightness,
+log lines stream) and via `python -m laserkbd --dry-run`. **Not yet seen on the Pi's
+browser** against live hardware, but transport + render are confirmed locally.
 
 **R38–R41 (standalone chords + effects).** Milestone 2's first slice: bring chord
 handling — present in the QLC+ build as R8–R11 — into the standalone build, plus a

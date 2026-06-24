@@ -1,23 +1,34 @@
 """Flask web interface: edit settings, run ArtPoll discovery, view logs.
 
-Kept intentionally simple (server-rendered, no JS framework): a dark, themed single
-page with a status strip, a live beam strip (snapshot at page load), grouped/labelled
-settings, the MIDI + ArtNet device scanners and the log view. Reload to refresh the
-status/logs; live push is a separate item (R37). Runs on the Flask dev server, which
-is fine for a single-user appliance on a trusted network — see the README before
-exposing it wider.
+Kept intentionally simple (server-rendered, vanilla JS only): a dark, themed single
+page with a status strip, two live strips (32-key input + 40-beam laser output),
+grouped/labelled settings, the MIDI + ArtNet device scanners and the log view.
+
+Live updates (R37) ride two WebSockets opened by the page: `/ws` streams the DMX
+thread's per-tick binary frame (see live.py) which the page paints on requestAnimationFrame,
+and `/logs` streams new log lines as JSON. Both are registered via flask-sock; if it is
+not installed the routes are skipped and the page degrades to its page-load snapshot.
+Runs on the Flask dev server (threaded), which is fine for a single-user appliance on a
+trusted network — see the README before exposing it wider.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from flask import Flask, redirect, render_template_string, request, url_for
 
-from . import artnet
+from . import artnet, fixtures
 from .config import ConfigHolder
+from .live import LiveBus
 from .log_buffer import RingBufferHandler
 from .state import KeyState
+
+try:
+    from flask_sock import Sock
+except ImportError:  # WebSocket live feed (R37) degrades gracefully if flask-sock is absent
+    Sock = None
 
 log = logging.getLogger(__name__)
 
@@ -82,8 +93,9 @@ _PAGE = """
  .wrap{max-width:880px;margin:0 auto;padding:2rem 1.25rem 4rem}
 
  header{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
- header .dot{width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);
-   box-shadow:0 0 10px 2px var(--accent)}
+ header .dot{width:.7rem;height:.7rem;border-radius:50%;background:#444a57;
+   transition:background .25s,box-shadow .25s} /* grey = no live connection */
+ header .dot.live{background:var(--accent);box-shadow:0 0 10px 2px var(--accent)}
  h1{font-size:1.4rem;margin:0;letter-spacing:-.02em;font-weight:650}
  .badge{font-size:.72rem;color:var(--muted);border:1px solid var(--line);
    border-radius:999px;padding:.1rem .55rem}
@@ -97,10 +109,20 @@ _PAGE = """
    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  .stat .v.accent{color:var(--accent-soft)}
 
- .beams{display:flex;gap:3px;margin-bottom:1.5rem;height:42px;align-items:flex-end}
- .beam{flex:1;height:18px;border-radius:3px;background:#23262f;transition:none}
+ .viz{display:flex;flex-direction:column;gap:.55rem;margin-bottom:1.5rem}
+ .viz-row{display:flex;align-items:center;gap:.7rem}
+ .viz-lbl{width:3.2rem;flex:none;font-size:.7rem;text-transform:uppercase;
+   letter-spacing:.06em;color:var(--muted);text-align:right}
+ .strip{flex:1;display:flex;gap:3px;height:42px;align-items:flex-end}
+ .strip.dots{height:24px;align-items:center;gap:4px}
+ .beam{flex:1;height:18px;border-radius:3px;background:#23262f;
+   transition:height .08s ease,background .08s ease}
  .beam.on{height:42px;background:linear-gradient(var(--accent-soft),var(--accent));
    box-shadow:0 0 8px 1px var(--accent)}
+ /* laser output: a red dot per beam, brightness driven live by --b (0..1) */
+ .dot{flex:1;max-width:18px;aspect-ratio:1;border-radius:50%;
+   background:rgba(255,43,70,calc(.10 + .90*var(--b,0)));
+   box-shadow:0 0 calc(11px*var(--b,0)) rgba(255,43,70,calc(.85*var(--b,0)))}
 
  section{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
    padding:1.1rem 1.2rem;margin-bottom:1.1rem}
@@ -138,7 +160,7 @@ _PAGE = """
 <div class="wrap">
 
  <header>
-  <span class="dot"></span>
+  <span id="conn" class="dot" title="live connection"></span>
   <h1>laser-keyboard</h1>
   <span class="badge">v{{ version }}</span>
  </header>
@@ -150,8 +172,19 @@ _PAGE = """
   <div class="stat"><div class="k">Tick rate</div><div class="v">{{ cfg.tick_hz }} Hz</div></div>
  </div>
 
- <div class="beams" title="live key state at page load">
-  {% for v in beams %}<span class="beam {{ 'on' if v > 0 }}"></span>{% endfor %}
+ <div class="viz">
+  <div class="viz-row">
+   <span class="viz-lbl">Keys</span>
+   <div id="keys" class="strip">
+    {% for v in beams %}<span class="beam {{ 'on' if v > 0 }}"></span>{% endfor %}
+   </div>
+  </div>
+  <div class="viz-row">
+   <span class="viz-lbl">Lasers</span>
+   <div id="lasers" class="strip dots">
+    {% for _ in range(beam_count) %}<span class="dot"></span>{% endfor %}
+   </div>
+  </div>
  </div>
 
  <form method="post" action="{{ url_for('settings') }}">
@@ -213,21 +246,113 @@ _PAGE = """
 
  <section>
   <h2>Logs</h2>
-  <div class="logs">{{ logs }}</div>
+  <div id="logbox" class="logs">{{ logs }}</div>
  </section>
 
 </div>
+
+<script>
+(function(){
+ // ---- live key + laser feed (binary frames over /ws) --------------------
+ var keyEls   = Array.prototype.slice.call(document.querySelectorAll('#keys .beam'));
+ var laserEls = Array.prototype.slice.call(document.querySelectorAll('#lasers .dot'));
+ var conn = document.getElementById('conn');
+ var latest = null, queued = false;
+
+ function paint(){
+   queued = false;
+   if(!latest) return;
+   var d = new Uint8Array(latest), p = 0;
+   var K = d[p++];
+   for(var i=0;i<K;i++){ var v=d[p++], el=keyEls[i]; if(el) el.classList.toggle('on', v>0); }
+   var B = d[p++];
+   for(var j=0;j<B;j++){ var b=d[p++], le=laserEls[j];
+     if(le) le.style.setProperty('--b', (b/255).toFixed(3)); }
+ }
+ // Coalesce 100 Hz of frames down to the display refresh: keep only the newest.
+ function schedule(){ if(!queued){ queued=true; requestAnimationFrame(paint); } }
+
+ function wsURL(path){
+   return (location.protocol==='https:'?'wss':'ws')+'://'+location.host+path;
+ }
+
+ function connectFrames(){
+   var ws = new WebSocket(wsURL('/ws'));
+   ws.binaryType = 'arraybuffer';
+   ws.onopen    = function(){ conn.classList.add('live'); };
+   ws.onmessage = function(e){ latest = e.data; schedule(); };
+   ws.onclose   = function(){ conn.classList.remove('live'); setTimeout(connectFrames, 1000); };
+   ws.onerror   = function(){ try{ ws.close(); }catch(_){} };
+ }
+
+ // ---- live log stream (JSON lines over /logs) ---------------------------
+ var logbox = document.getElementById('logbox');
+ function connectLogs(){
+   var ws = new WebSocket(wsURL('/logs'));
+   ws.onmessage = function(e){
+     var msg; try{ msg = JSON.parse(e.data); }catch(_){ return; }
+     if(!msg.lines || !msg.lines.length) return;
+     var atBottom = logbox.scrollTop + logbox.clientHeight >= logbox.scrollHeight - 4;
+     logbox.textContent += (logbox.textContent ? '\\n' : '') + msg.lines.join('\\n');
+     if(atBottom) logbox.scrollTop = logbox.scrollHeight;
+   };
+   ws.onclose = function(){ setTimeout(connectLogs, 1000); };
+   ws.onerror = function(){ try{ ws.close(); }catch(_){} };
+ }
+
+ logbox.scrollTop = logbox.scrollHeight;
+ connectFrames();
+ connectLogs();
+})();
+</script>
 </body></html>
 """
 
 
-def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHandler) -> Flask:
+def _register_websockets(app: Flask, live_bus: LiveBus | None,
+                         log_buffer: RingBufferHandler) -> None:
+    """Register the live feed (R37): /ws streams binary key+laser frames, /logs streams
+    new log lines as JSON. No-op if flask-sock is unavailable, so the page still works
+    (the strips just stay at their page-load snapshot). Each handler blocks on its source
+    and resends on a 10 s timeout so a dropped client is noticed and cleaned up."""
+    if Sock is None:
+        log.warning("flask-sock not installed; live WebSocket feed disabled")
+        return
+    sock = Sock(app)
+
+    @sock.route("/ws")
+    def ws_frames(ws):  # pragma: no cover - exercised over a real socket
+        if live_bus is None:
+            return
+        seq, frame = live_bus.snapshot()
+        try:
+            ws.send(frame)
+            while True:
+                seq, frame = live_bus.wait_next(seq, timeout=10.0)
+                ws.send(frame)   # changed frame, or a keepalive resend on timeout
+        except Exception:
+            pass
+
+    @sock.route("/logs")
+    def ws_logs(ws):  # pragma: no cover - exercised over a real socket
+        last = log_buffer.total()   # page already shows the backlog; stream from here
+        try:
+            while True:
+                last, new = log_buffer.wait_since(last, timeout=10.0)
+                ws.send(json.dumps({"lines": new}))   # empty list = keepalive
+        except Exception:
+            pass
+
+
+def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHandler,
+               live_bus: LiveBus | None = None) -> Flask:
     app = Flask(__name__)
     # Last discovery result, kept in memory so it survives the redirect after a scan.
     app.config["_devices"] = []
     app.config["_scanned"] = False
     app.config["_midi_ports"] = []
     app.config["_midi_scanned"] = False
+    _register_websockets(app, live_bus, log_buffer)
 
     from . import __version__
 
@@ -243,6 +368,7 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
             groups=_GROUPS,
             editable=editable,
             beams=beams,
+            beam_count=len(fixtures.all_beam_channels(cfg)),
             held=state.held_count(),
             target=target,
             devices=app.config["_devices"],

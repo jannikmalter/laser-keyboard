@@ -16,9 +16,10 @@ import logging
 import threading
 import time
 
-from . import decay, effects, fixtures
+from . import decay, effects, fixtures, live
 from .artnet import ArtNetSender
 from .config import Config, ConfigHolder
+from .live import LiveBus
 from .state import KeyState
 
 log = logging.getLogger(__name__)
@@ -26,12 +27,14 @@ log = logging.getLogger(__name__)
 
 class DmxThread(threading.Thread):
     def __init__(self, state: KeyState, config: ConfigHolder,
-                 stop_event: threading.Event, dry_run: bool = False):
+                 stop_event: threading.Event, dry_run: bool = False,
+                 live_bus: LiveBus | None = None):
         super().__init__(name="dmx", daemon=True)
         self._state = state
         self._config = config
         self._stop = stop_event
         self._dry_run = dry_run
+        self._live = live_bus
         self._sender = ArtNetSender(dry_run=dry_run)
         # Chord index -> monotonic trigger time. The one piece of effect state the DMX
         # thread keeps; effects themselves are closed-form over now - trigger (R38/R39).
@@ -115,6 +118,14 @@ class DmxThread(threading.Thread):
             return cfg.artnet_ip
         return "255.255.255.255"
 
+    def _publish_live(self, cfg: Config, frame: bytes) -> None:
+        """Publish a live-viz snapshot for the web UI (R37): key velocities (input) and
+        the 40 rendered beam brightnesses (output, read back out of the DMX frame)."""
+        keys = [v for v, _ in self._state.snapshot()]
+        beams = [frame[ch] if ch < len(frame) else 0
+                 for ch in fixtures.all_beam_channels(cfg)]
+        self._live.publish(live.encode_frame(keys, beams))
+
     def run(self) -> None:
         log.info("DMX thread started%s", " (dry-run: not sending)" if self._dry_run else "")
         next_tick = time.perf_counter()
@@ -125,6 +136,8 @@ class DmxThread(threading.Thread):
 
             frame = self._render(cfg, time.monotonic())
             self._sender.send(self._target_ip(cfg), cfg.artnet_universe, frame)
+            if self._live is not None:
+                self._publish_live(cfg, frame)
 
             now = time.perf_counter()
             if self._dry_run and now - last_status >= 2.0:

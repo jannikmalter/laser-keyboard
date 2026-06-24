@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .config import DEFAULT_CONFIG_PATH, Config, ConfigHolder
 from .dmx_thread import DmxThread
+from .live import LiveBus
 from .log_buffer import RingBufferHandler
 from .state import KeyState
 from .web import create_app
@@ -54,6 +55,7 @@ def main() -> None:
 
     holder = ConfigHolder(config, args.config)
     state = KeyState(config.key_count)
+    live_bus = LiveBus()   # DMX thread publishes frames; web streams them (R37)
     stop_event = threading.Event()
 
     if args.dry_run:
@@ -62,12 +64,12 @@ def main() -> None:
     else:
         from .midi_thread import MidiThread
         midi = MidiThread(state, holder, stop_event)
-    dmx = DmxThread(state, holder, stop_event, dry_run=args.dry_run)
+    dmx = DmxThread(state, holder, stop_event, dry_run=args.dry_run, live_bus=live_bus)
     midi.start()
     dmx.start()
 
     # Flask dev server runs in a daemon thread so the main thread can wait on signals.
-    app = create_app(state, holder, ring)
+    app = create_app(state, holder, ring, live_bus)
 
     def run_web():
         try:

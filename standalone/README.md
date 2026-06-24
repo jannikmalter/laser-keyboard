@@ -23,8 +23,8 @@ Three threads share state (`laserkbd/`):
 |--------|--------|------|
 | `midi_thread.py` | MIDI | read the keyboard, update `KeyState` |
 | `dmx_thread.py`  | DMX  | render a DMX frame from `KeyState`, send ArtNet on a ~100 Hz tick |
-| `web.py`         | web  | Flask UI: settings, MIDI + ArtPoll device scan, logs |
-| `config.py` · `state.py` · `fixtures.py` · `decay.py` · `artnet.py` · `log_buffer.py` · `sim.py` | — | shared support |
+| `web.py`         | web  | Flask UI: settings, MIDI + ArtPoll device scan, logs, live key/laser + log feed over WebSocket |
+| `config.py` · `state.py` · `fixtures.py` · `decay.py` · `effects.py` · `artnet.py` · `log_buffer.py` · `live.py` · `sim.py` | — | shared support |
 
 ## System dependencies (Linux / Raspberry Pi)
 
@@ -56,13 +56,15 @@ busy). Settings are saved to `config.json` next to the package and reloaded on r
 ### Dry-run (test the web UI without hardware)
 
 ```bash
-python -m laserkbd --dry-run     # only needs flask, not python-rtmidi
+python -m laserkbd --dry-run     # only needs flask + flask-sock, not python-rtmidi
 ```
 
-Dry-run replaces the keyboard with a simulator that sweeps a single beam (so the UI
-shows live "keys held" activity and the render loop logs a status line every couple
+Dry-run replaces the keyboard with a simulator that sweeps a single beam (so the UI's
+live key + laser strips animate and the render loop logs a status line every couple
 of seconds) and suppresses all ArtNet output — nothing is put on the network. Use it
 to develop and test the web interface on any machine, no Pi/keyboard/node required.
+The live visualisation streams over WebSockets (flask-sock; pure-Python, no compiler);
+if it's missing the page still loads and just shows a static snapshot.
 
 ## Run on the Pi (systemd)
 

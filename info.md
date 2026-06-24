@@ -134,6 +134,38 @@ standalone counterpart to the QLC+ chord handling, but rendered in Python.
   look can be tuned live on hardware. The full-keyboard (12+ keys) bonus is not built
   yet (`TODO(milestone-2)` in `_render`).
 
+## Web UI & live visualisation (R35/R37)
+
+The Flask page (`web.py`) is a single server-rendered dark page (vanilla JS only, no
+framework). Settings are grouped into labelled sections from `_GROUPS` (each field
+carries a human label + a unit hint); `_EDITABLE` — the name→caster map the POST
+handler uses — is derived from `_GROUPS`, so adding a setting is one entry.
+
+The page shows two live strips: a **32-key input row** (lit when a key is held) and a
+**40-beam laser-output row** (one red dot per beam, brightness driven live). They update
+over two WebSockets, registered via **flask-sock** in `_register_websockets` (skipped
+with a warning if flask-sock is absent — the page then just shows its page-load snapshot):
+
+- **`/ws`** streams the live frame. Every tick the DMX thread calls `_publish_live`,
+  which packs **key velocities** (the input, from `state.snapshot()`) and the **40 beam
+  brightnesses** (the output, read back out of the just-rendered DMX frame so decay +
+  effects are included) via `live.encode_frame` → a 74-byte message
+  `[K][32 velocities][B][40 brightnesses]`. It posts to a `LiveBus` (`live.py`): a
+  latest-frame condition-variable pub/sub that **drops identical frames** (an idle
+  keyboard → no traffic) and wakes the WS handler, which sends on change (and resends as
+  a keepalive every 10 s so a dead client is noticed). At 100 Hz this is ~7 kB/s — far
+  below ArtNet. The browser keeps only the newest frame and paints it on
+  `requestAnimationFrame`, decoupling the 100 Hz stream from the ~60 Hz display.
+- **`/logs`** streams new log lines as JSON. `RingBufferHandler` (`log_buffer.py`) gained
+  a monotonic counter + a blocking `wait_since(last_total, timeout)`; the page renders the
+  backlog server-side and the socket appends lines emitted after connect (auto-scrolls if
+  already at the bottom).
+
+The header dot is a connection indicator (grey → red when `/ws` is open); both sockets
+auto-reconnect after 1 s. The `LiveBus` is created in `__main__`, handed to both the
+`DmxThread` (publisher) and `create_app` (consumer). Works under `--dry-run` too, so the
+visualisation can be exercised without hardware.
+
 ## How the QLC+ mapping works
 
 - **Note offset:** incoming notes are shifted by `-41` so the playable range becomes
