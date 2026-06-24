@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Adjust User and paths to match your Pi install.
-User=pi
-WorkingDirectory=/home/pi/laser-keyboard/standalone
-ExecStart=/home/pi/laser-keyboard/standalone/.venv/bin/python -m laserkbd
+User=lichtfetisch
+WorkingDirectory=/home/lichtfetisch/laser-keyboard/standalone
+ExecStart=/home/lichtfetisch/laser-keyboard/standalone/.venv/bin/python -m laserkbd
 Restart=on-failure
 RestartSec=2
 

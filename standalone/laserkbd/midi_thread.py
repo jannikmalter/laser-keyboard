@@ -8,6 +8,11 @@ the bugs logged against the original script:
   * note-on with velocity 0 is treated as note-off
   * the note->key index is range-checked before use (no negative-index wrap, no
     IndexError swallowed by a bare except)
+
+USB-disconnect resilience (R29): the run loop polls for the keyboard vanishing — not
+trusting is_port_open() alone, which can lie after an unplug, but also checking the
+connected name is still in get_ports(). On disconnect it releases all held keys (so no
+beam sticks on), then auto-reconnects by name when the keyboard is replugged.
 """
 
 from __future__ import annotations
@@ -105,24 +110,48 @@ class MidiThread(threading.Thread):
         except (rtmidi.SystemError, rtmidi.InvalidPortError, ValueError) as exc:
             log.warning("MIDI open failed: %s", exc)
 
+    def _port_gone(self) -> bool:
+        """True if the connected keyboard is no longer present (e.g. USB unplugged).
+
+        We can't rely on is_port_open() alone — it can keep reporting open after the
+        device vanishes — so we also check that the connected port name still appears
+        in the current port list. Any error while probing is taken to mean it's gone."""
+        try:
+            if not self._midi_in.is_port_open():
+                return True
+            return self._connected_name not in self._midi_in.get_ports()
+        except Exception as exc:  # backend hiccup mid-unplug — assume disconnected
+            log.debug("MIDI port probe failed (%s); treating as disconnected", exc)
+            return True
+
+    def _disconnect(self) -> None:
+        """Drop the current connection and clear held keys so no beam stays stuck on
+        (R29). Auto-reconnect happens on the next loop via _try_connect()."""
+        try:
+            self._midi_in.close_port()
+        except Exception as exc:  # never let teardown crash the thread
+            log.debug("error closing MIDI port: %s", exc)
+        self._connected = False
+        self._connected_name = ""
+        self._state.release_all()
+
     def run(self) -> None:
         log.info("MIDI thread started")
         while not self._stop.is_set():
             if not self._connected:
                 self._try_connect()
             else:
-                # rtmidi delivers messages via the callback on its own thread;
-                # here we watch for the device vanishing, and for the user picking a
-                # different keyboard in the web UI (midi_port_name no longer matches
-                # the open port) — in which case we drop and reconnect to the new one.
+                # rtmidi delivers note messages via the callback on its own thread.
+                # Here we poll for the keyboard vanishing (USB unplug — release keys
+                # and reconnect) and for the user picking a different keyboard in the
+                # web UI (midi_port_name no longer matches the open port).
                 name = self._config.get().midi_port_name
-                if not self._midi_in.is_port_open():
-                    log.warning("MIDI port lost; will reconnect")
-                    self._connected = False
+                if self._port_gone():
+                    log.warning("MIDI keyboard disconnected; released keys, will reconnect")
+                    self._disconnect()
                 elif name and name.lower() not in self._connected_name.lower():
                     log.info("MIDI device changed to %r; switching", name)
-                    self._midi_in.close_port()
-                    self._connected = False
+                    self._disconnect()
             self._stop.wait(RECONNECT_INTERVAL)
-        self._midi_in.close_port()
+        self._disconnect()
         log.info("MIDI thread stopped")

@@ -25,6 +25,13 @@ class KeyState:
             if 0 <= index < len(self._velocity):
                 self._velocity[index] = 0
 
+    def release_all(self) -> None:
+        """Clear every held key. Used on MIDI disconnect so no beam stays stuck on
+        (the held velocities can't be cleared by note-off once the keyboard is gone)."""
+        with self._lock:
+            for i in range(len(self._velocity)):
+                self._velocity[i] = 0
+
     def snapshot(self) -> list[int]:
         """Return a copy of per-key velocities for the renderer to read."""
         with self._lock:
