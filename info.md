@@ -77,14 +77,18 @@ per-beam mode (see the BeamBar note below), then drives the per-key beams via th
   `time.monotonic()` onset stamped on each strike (re-pressing a held key resets the
   onset → re-struck string). Velocity and onset are snapshotted together under one
   lock so the renderer never pairs mismatched values.
-- `decay.py` is the pure curve: brightness `= master · 2^(−elapsed / half_life)`,
-  where `half_life` scales linearly with velocity between `half_life_min_s` and
-  `half_life_max_s` (0.2 s soft → 1.0 s hard, so ~50% brightness ~1 s after a
-  full-velocity hit). Exponential, evaluated closed-form each tick (no integrated
-  state), so it's jitter-proof and instantly responsive to a live config change; it
-  rounds to 0 in the tail, so a held key eventually reads off without an explicit
-  cutoff. (We started with a smootherstep S-curve but switched: the keyboard tends
-  to send full velocity and the S-curve's flat top hid the decay.)
+- `decay.py` is the pure curve, evaluated closed-form each tick (no integrated
+  state), so it's jitter-proof and instantly responsive to a live config change. The
+  shape is selectable via `decay_mode`:
+  - **exponential** (default): `master · 2^(−elapsed / t)` — halves every `t`,
+    rounds to 0 in the tail (so a held key reads off without an explicit cutoff).
+  - **linear**: ramps straight from `master` to 0 over `t`, then off.
+
+  `t` scales linearly with velocity between `decay_t_min_s` and `decay_t_max_s`
+  (0.2 s soft → 1.0 s hard; for exponential `t` is the half-life, so ~50% brightness
+  ~1 s after a full-velocity hit). All three are editable in the web UI and persisted.
+  (We started with a smootherstep S-curve but switched: the keyboard tends to send
+  full velocity and the S-curve's flat top hid the decay.)
 - **Note-off is immediate:** release sets velocity to 0, and the renderer skips
   velocity-0 keys, so the beam switches off at once regardless of the decay. A key
   held past its full decay also reads 0 (the string went silent while held).

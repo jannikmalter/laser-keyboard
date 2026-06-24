@@ -29,6 +29,9 @@ _EDITABLE = {
     "artnet_universe": int,
     "tick_hz": float,
     "master_brightness": int,
+    "decay_mode": str,
+    "decay_t_min_s": float,
+    "decay_t_max_s": float,
     "log_level": str,
 }
 
@@ -53,6 +56,11 @@ _PAGE = """
      <select name="artnet_mode">
        <option value="broadcast" {{ 'selected' if value=='broadcast' }}>broadcast</option>
        <option value="unicast" {{ 'selected' if value=='unicast' }}>unicast</option>
+     </select>
+   {% elif name == 'decay_mode' %}
+     <select name="decay_mode">
+       <option value="exponential" {{ 'selected' if value=='exponential' }}>exponential</option>
+       <option value="linear" {{ 'selected' if value=='linear' }}>linear</option>
      </select>
    {% else %}
      <input name="{{ name }}" value="{{ value }}">
