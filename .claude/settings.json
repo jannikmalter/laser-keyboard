@@ -3,5 +3,18 @@
     "allow": [
       "Bash(python -m py_compile laserkbd/*.py)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/../LLMbootstrap/LLMbootstrap.md\" 2>/dev/null || true",
+            "statusMessage": "Loading LLMbootstrap.md"
+          }
+        ]
+      }
+    ]
   }
 }

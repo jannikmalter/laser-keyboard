@@ -63,6 +63,22 @@ _PAGE = """
  </fieldset>
 </form>
 
+<form method="post" action="{{ url_for('midi_scan') }}">
+ <fieldset><legend>MIDI devices</legend>
+  <button type="submit">Scan MIDI devices</button>
+  {% if midi_ports %}
+   <table><tr><th>Port</th><th></th></tr>
+   {% for p in midi_ports %}
+    <tr><td>{{ p }}</td>
+        <td>{% if p == cfg.midi_port_name %}<b>in use</b>{% else %}
+            <a href="{{ url_for('use_midi', name=p) }}">use</a>{% endif %}</td></tr>
+   {% endfor %}</table>
+  {% elif midi_scanned %}
+   <p>No MIDI input ports found.</p>
+  {% endif %}
+ </fieldset>
+</form>
+
 <form method="post" action="{{ url_for('artpoll') }}">
  <fieldset><legend>ArtNet devices</legend>
   <button type="submit">Send ArtPoll &amp; scan</button>
@@ -90,6 +106,8 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
     # Last discovery result, kept in memory so it survives the redirect after a scan.
     app.config["_devices"] = []
     app.config["_scanned"] = False
+    app.config["_midi_ports"] = []
+    app.config["_midi_scanned"] = False
 
     from . import __version__
 
@@ -106,6 +124,8 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
             target=target,
             devices=app.config["_devices"],
             scanned=app.config["_scanned"],
+            midi_ports=app.config["_midi_ports"],
+            midi_scanned=app.config["_midi_scanned"],
             logs="\n".join(log_buffer.lines()),
         )
 
@@ -125,6 +145,28 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
         if changes:
             config.update(**changes)
             log.info("settings updated: %s", ", ".join(changes))
+        return redirect(url_for("index"))
+
+    @app.post("/midi-scan")
+    def midi_scan():
+        log.info("MIDI device scan requested")
+        try:
+            # Lazy import: --dry-run runs without rtmidi, so don't require it here.
+            from .midi_thread import list_input_ports
+            ports = list_input_ports()
+        except ImportError:
+            log.warning("rtmidi not available; cannot list MIDI ports (dry-run?)")
+            ports = []
+        app.config["_midi_ports"] = ports
+        app.config["_midi_scanned"] = True
+        log.info("MIDI scan found %d input port(s)", len(ports))
+        return redirect(url_for("index"))
+
+    @app.get("/use-midi")
+    def use_midi():
+        name = request.args.get("name", "")
+        config.update(midi_port_name=name)
+        log.info("MIDI keyboard set to %r", name)
         return redirect(url_for("index"))
 
     @app.post("/artpoll")

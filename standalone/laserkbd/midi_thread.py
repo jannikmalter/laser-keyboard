@@ -28,6 +28,20 @@ NOTE_OFF = 0x80
 RECONNECT_INTERVAL = 1.0
 
 
+def list_input_ports() -> list[str]:
+    """Return the names of the available MIDI input ports, for the web-UI picker.
+
+    Returns [] (and logs) if the backend can't enumerate ports, so the caller never
+    has to special-case failure. Importing this module already requires rtmidi; the
+    web UI imports it lazily so --dry-run (no rtmidi) can degrade to an empty list.
+    """
+    try:
+        return rtmidi.MidiIn().get_ports()
+    except Exception as exc:  # backend/driver errors are non-fatal for a listing
+        log.warning("could not list MIDI input ports: %s", exc)
+        return []
+
+
 class MidiThread(threading.Thread):
     def __init__(self, state: KeyState, config: ConfigHolder, stop_event: threading.Event):
         super().__init__(name="midi", daemon=True)
@@ -36,6 +50,8 @@ class MidiThread(threading.Thread):
         self._stop = stop_event
         self._midi_in = rtmidi.MidiIn()
         self._connected = False
+        self._connected_name = ""  # name of the currently open port, for live re-pick
+        self._callback_set = False
 
     # -- callback ---------------------------------------------------------------
     def _on_message(self, event, _data=None) -> None:
@@ -75,10 +91,17 @@ class MidiThread(threading.Thread):
         if port is None:
             return
         try:
+            # A callback survives close_port(), and set_callback() raises if one is
+            # already registered — so clear any leftover before (re)connecting.
+            if self._callback_set:
+                self._midi_in.cancel_callback()
+                self._callback_set = False
             self._midi_in.open_port(port)
             self._midi_in.set_callback(self._on_message)
+            self._callback_set = True
             self._connected = True
-            log.info("MIDI connected: %s", self._midi_in.get_port_name(port))
+            self._connected_name = self._midi_in.get_port_name(port)
+            log.info("MIDI connected: %s", self._connected_name)
         except (rtmidi.SystemError, rtmidi.InvalidPortError, ValueError) as exc:
             log.warning("MIDI open failed: %s", exc)
 
@@ -89,9 +112,16 @@ class MidiThread(threading.Thread):
                 self._try_connect()
             else:
                 # rtmidi delivers messages via the callback on its own thread;
-                # here we only watch for the device vanishing.
+                # here we watch for the device vanishing, and for the user picking a
+                # different keyboard in the web UI (midi_port_name no longer matches
+                # the open port) — in which case we drop and reconnect to the new one.
+                name = self._config.get().midi_port_name
                 if not self._midi_in.is_port_open():
                     log.warning("MIDI port lost; will reconnect")
+                    self._connected = False
+                elif name and name.lower() not in self._connected_name.lower():
+                    log.info("MIDI device changed to %r; switching", name)
+                    self._midi_in.close_port()
                     self._connected = False
             self._stop.wait(RECONNECT_INTERVAL)
         self._midi_in.close_port()

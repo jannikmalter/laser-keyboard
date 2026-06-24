@@ -58,7 +58,12 @@ depend on the machine's MIDI device order and often need adjusting on a new setu
 The script polls once per second and auto-reconnects if a port drops.
 
 **Standalone build** (`standalone/`) — see `standalone/README.md`; runs with
-`python -m laserkbd` and serves a web UI on port 8080.
+`python -m laserkbd` and serves a web UI on port 8088 (configurable via `web_port`).
+On Linux/Pi, `python-rtmidi` compiles from source and needs the ALSA dev headers plus
+a C toolchain first (`sudo apt install libasound2-dev pkg-config build-essential
+python3-dev`); without them `pip install` fails with `Dependency "alsa" not found`.
+Not needed for `--dry-run` (rtmidi isn't imported) or on Windows (prebuilt wheels).
+This is a setup prerequisite for R27 (run on the Pi); see `standalone/README.md`.
 
 ## How the QLC+ mapping works
 
@@ -88,8 +93,9 @@ each) into the `bars` fixture group, plus Generic RGB fixtures, and provides sce
   so MIDI parsing errors are silently swallowed. Keep this in mind when debugging — a
   malformed message or an out-of-range note index just disappears. (The standalone
   build fixes this class of bug by design.) Tracked as B1–B6 in `reqs.md`.
-- There is no linter/CI; the QLC+ build is run by hand. The standalone build has a
-  few dependency-free smoke tests you can run ad hoc.
+- There is no linter, CI, or committed test suite; both builds are run by hand. The
+  standalone build can be byte-compiled (`python -m compileall standalone/laserkbd`)
+  and exercised end to end with `python -m laserkbd --dry-run` (no hardware needed).
 - `.qxw` files are XML; they're normally edited inside the QLC+ app, but small,
   targeted edits by hand are fine if you preserve the structure.
 

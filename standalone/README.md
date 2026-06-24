@@ -21,8 +21,23 @@ Three threads share state (`laserkbd/`):
 |--------|--------|------|
 | `midi_thread.py` | MIDI | read the keyboard, update `KeyState` |
 | `dmx_thread.py`  | DMX  | render a DMX frame from `KeyState`, send ArtNet on a ~100 Hz tick |
-| `web.py`         | web  | Flask UI: settings, ArtPoll device scan, logs |
+| `web.py`         | web  | Flask UI: settings, MIDI + ArtPoll device scan, logs |
 | `config.py` · `state.py` · `fixtures.py` · `artnet.py` · `log_buffer.py` | — | shared support |
+
+## System dependencies (Linux / Raspberry Pi)
+
+`python-rtmidi` is compiled from source on Linux and needs the ALSA development
+headers and a C toolchain, or `pip install` fails with
+`ERROR: Dependency "alsa" not found (tried pkg-config)`. On Raspberry Pi OS / Debian:
+
+```bash
+sudo apt update
+sudo apt install libasound2-dev pkg-config build-essential python3-dev
+# optional: libjack-dev   # adds the JACK backend / silences the JACK-not-found warning
+```
+
+Not needed for `--dry-run` (which doesn't import `python-rtmidi`) or on Windows
+(rtmidi ships prebuilt wheels there).
 
 ## Run (dev)
 
@@ -33,8 +48,8 @@ pip install -r requirements.txt
 python -m laserkbd                  # optional: --config /path/to/config.json
 ```
 
-Then open `http://<host>:8080`. Settings are saved to `config.json` next to the
-package and reloaded on restart.
+Then open `http://<host>:8088` (the default `web_port`; change it in the config if
+busy). Settings are saved to `config.json` next to the package and reloaded on restart.
 
 ### Dry-run (test the web UI without hardware)
 
@@ -62,6 +77,9 @@ journalctl -u laser-keyboard -f
 All settings live in `config.json` (see `laserkbd/config.py` for fields and
 defaults). Key ones:
 
+- **MIDI keyboard** — `midi_port_name` (substring match; empty = first input). Use the
+  web UI's *Scan MIDI devices* button to list input ports and pick one; the choice
+  takes effect on the next MIDI (re)connect.
 - **ArtNet target** — `artnet_mode` `broadcast`/`unicast`, `artnet_ip`, `artnet_universe`.
   Use the web UI's *ArtPoll & scan* button to discover nodes and pick one.
 - **Tick rate** — `tick_hz` (default 100). Can exceed 44 Hz because the node forwards

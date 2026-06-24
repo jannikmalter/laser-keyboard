@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-06-23
+Status: Active · Updated: 2026-06-24
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -17,12 +17,12 @@ What this deliberately will *not* do (stops scope creep).
   while beams are on/off only. (by design)
 - Hard real-time timing measures (PREEMPT_RT kernel, `isolcpus`, core pinning) —
   out of scope unless timing problems actually appear; the jitter budget is generous.
-- Effects in the standalone build's Milestone 1 — deferred to Milestone 2 (see Todos).
+- Effects in the standalone build's Milestone 1 — deferred to Milestone 2 (see `todo.md`).
 
 ## Requirements
 One row each. Use "shall". `Type`: F=function, Q=quality, C=constraint.
 QLC+ items (R1–R14) are **as-built** — recorded from the shipped code, `Done` ☑ with
-the code as evidence. Standalone items (R15–R28) trace to **G2**; see status note below.
+the code as evidence. Standalone items (R15–R32) trace to **G2**; see status note below.
 
 | ID  | Type | Requirement                                                                          | Pri | Goal | Done |
 |-----|------|--------------------------------------------------------------------------------------|-----|------|------|
@@ -40,7 +40,7 @@ the code as evidence. Standalone items (R15–R28) trace to **G2**; see status n
 | R12 | C    | The QLC+ workspace shall patch 4× BeamBar 10R (13-channel mode) + Generic RGB fixtures. | M | G1 | ☑ |
 | R13 | F    | The QLC+ workspace shall map MIDI note input channels to per-beam DMX channels via virtual-console sliders. | M | G1 | ☑ |
 | R14 | F    | The QLC+ workspace shall provide scenes (`haus*`, `par*`, `strobe*`) and RGBMatrix effects (`wave1/2`, `gewitter`, `rainbow`, red/green/blue chases). | S | G1 | ☑ |
-| R15 | F    | The standalone build shall run from its own entry point (`python -m laserkbd`).      | M   | G2   | ☐    |
+| R15 | F    | The standalone build shall run from its own entry point (`python -m laserkbd`).      | M   | G2   | ☑    |
 | R16 | F    | The MIDI thread shall select the keyboard by name and handle notes robustly: mask the MIDI channel (`status & 0xF0`), treat note-on velocity 0 as note-off, and guard the note range before indexing (folds in B1–B6). | M | G2 | ☐ |
 | R17 | F    | The system shall hold thread-safe key state for 32 keys (`state.py`).                | M   | G2   | ☐    |
 | R18 | F    | The DMX thread shall compute lighting and send ArtNet on one synchronized, free-running, configurable tick (monotonic deadline loop, `dmx_thread.py`). | M | G2 | ☐ |
@@ -49,17 +49,27 @@ the code as evidence. Standalone items (R15–R28) trace to **G2**; see status n
 | R21 | F    | The system shall send on a configurable ArtNet universe.                             | M   | G2   | ☐    |
 | R22 | F    | The web UI shall offer ArtPoll device discovery: a button lists replying nodes (ArtPollReply); selecting one uses its IP as the unicast target. | S | G2 | ☐ |
 | R23 | F    | The fixture/DMX mapping (4× BeamBar 10R: base addresses 0/13/26/39, per-beam offsets) shall live in Python config, not QLC+. | M | G2 | ☐ |
-| R24 | F    | The Flask web interface shall provide a live log view and a settings editor.         | M   | G2   | ☐    |
+| R24 | F    | The Flask web interface shall provide a live log view and a settings editor.         | M   | G2   | ☑    |
 | R25 | F    | The system shall provide a dry-run mode (`--dry-run`): simulated keyboard + suppressed ArtNet, for testing the web UI without hardware. | S | G2 | ☑ |
 | R26 | C    | Settings shall persist across restarts (config file on disk).                        | S   | G2   | ☑    |
 | R27 | C    | The system shall run on boot as a systemd service (`laser-keyboard.service`) with MIDI auto-reconnect. | S | G2 | ☐ |
 | R28 | F    | The system shall shut all threads down cleanly on stop (SIGINT/SIGTERM → stop event → join). | M | G2 | ☐ |
+| R29 | Q    | The standalone build shall survive a USB disconnect of the MIDI keyboard: the MIDI thread shall catch the disconnect without crashing the process, release held key state so no beam stays stuck on, and auto-reconnect (by name) when the keyboard is replugged. | M | G2 | ☐ |
+| R30 | Q    | The standalone build shall survive interruption of network access: ArtNet send errors (network down/host unreachable) shall be caught and logged without stalling or crashing the render loop, and output shall resume automatically when the network returns. | M | G2 | ☐ |
+| R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☐ |
+| R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
 
-**Standalone status note (R15–R28).** Items not yet ☑ have a working skeleton in
-`standalone/laserkbd/`, verified by compile + dependency-free smoke tests, but are
+**Standalone status note (R15–R32).** Items not yet ☑ have a working skeleton in
+`standalone/laserkbd/`, verified by byte-compiling and running in `--dry-run` mode
+(there is no committed automated test suite), but are
 **not validated on real hardware** (Pi + keyboard + ArtNet node) and so are left ☐.
-R25 and R26 are ☑ (round-trip tested without hardware). What remains before Milestone 1
-can be marked done is the end-to-end hardware test — see Todos and `reqs/G2.md`.
+R15, R24, R25, R26 and R32 are ☑ — fully exercisable in `--dry-run` without hardware (entry
+point, web UI, dry-run mode, settings persistence, MIDI device picker — the picker's
+list is empty without rtmidi/hardware but the UI path is exercised). What remains before Milestone 1
+can be marked done is the end-to-end hardware test — see `todo.md` and `reqs/G2.md`.
+The resilience requirements R29–R31 (survive USB disconnect, network interruption,
+power loss) are new and not yet implemented; their design home is the "Resilience"
+section in `reqs/G2.md`.
 
 ## Bugs
 Deviations from a requirement. `Ref` = the requirement broken. All are in the **QLC+
@@ -75,20 +85,7 @@ design but does not close them in the QLC+ build.
 | B5 | Bare `except: pass` hides all errors, masking B1–B4; should at least log. `qlcplus/laserkeyboard.py:75-76` | R5 | Lo | ☐ |
 | B6 | Connection check doesn't detect disconnects: `get_port_name(port)` returns a name by index even after the device is unplugged/reindexed, so auto-reconnect is largely cosmetic. `qlcplus/laserkeyboard.py:90`, `:107` | R3 | Md | ☐ |
 
-## Todos
-Work items. Reference the ID they advance.
-
-- [ ] End-to-end test the standalone build on the Pi with a real keyboard and ArtNet
-      node; confirm the raw-socket ArtNet approach and ArtPoll discovery work. (R15–R28, G2)
-- [ ] Milestone 2: chord-triggered effects, rendered in Python in the DMX thread. (G2)
-- [ ] Milestone 2: full-keyboard (12+ keys) bonus effect. (G2)
-- [ ] Milestone 2: effect parity with the old QLC+ set as desired (waves, rainbow,
-      gewitter, strobe, chases) via a small effects engine. (G2)
-- [ ] Decide whether to fix B1–B6 in the QLC+ build or accept they are superseded by
-      the standalone build (R16). (B1–B6)
-- [x] Dry-run mode for testing the web UI without hardware. (R25)
-- [x] Persist settings across restarts. (R26)
-
 ---
 *Pri:* M/S/C (must/should/could). *Sev:* Hi/Md/Lo. IDs are permanent — never reuse.
 *Detail files: `reqs/<ID>.md` — see `reqs/G2.md` for the standalone build's design.*
+*Work items live in `todo.md`.*
