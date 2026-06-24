@@ -58,7 +58,7 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
 | R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on the beam lights at full brightness and decays over time; the decay shape (linear or exponential) and its per-velocity time bounds (`t_min`/`t_max`) shall be selectable in the web UI and persisted (R24/R26); MIDI velocity controls the decay time (soft hit → fast decay, hard hit → slow decay); on note-off the beam switches off immediately. | M | G2 | ☑ |
 | R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
-| R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☐ |
+| R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☑ |
 | R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
 | R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time, and the log view shall stream new entries as they arrive. | C | G2 | ☐ |
 | R38 | F    | The standalone build shall detect chords — configured sets of key indices recognised as triggered when all their keys are held simultaneously (the standalone counterpart to R8/R9), evaluated from key state on each DMX tick with edge detection (trigger on completion, clear on release). | S | G2 | ☐ |
@@ -92,7 +92,15 @@ half-life, so ~50% brightness ~1 s after a full-velocity hit). All three are edi
 in the web UI and persisted. We started with a smootherstep S-curve but dropped it
 after on-hardware testing — the keyboard tends to fire full velocity and the S-curve's
 flat top hid the decay. **Confirmed working on hardware (2026-06-24)** in exponential
-mode. R34–R37 (usage logging, web polish/graph, live WebSocket) remain ☐.
+mode. R34, R36, R37 (usage logging, web graph, live WebSocket) remain ☐.
+
+**R35 (web UI visual polish).** Done: `web.py` rewritten as a themed dark single page
+(laser-red accent) — status strip, a live beam strip (per-key snapshot at page load),
+and the settings form regrouped into labelled sections (MIDI / ArtNet / Brightness &
+decay / Chord effects / Logging) with human labels + unit hints replacing the raw
+field names. Routes and form field names are unchanged; verified by rendering under
+`flask` test client (page renders, lit beams match held keys, settings POST
+round-trips). Still server-rendered, no JS — live push stays R37.
 
 **R38–R41 (standalone chords + effects).** Milestone 2's first slice: bring chord
 handling — present in the QLC+ build as R8–R11 — into the standalone build, plus a

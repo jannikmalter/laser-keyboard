@@ -16,7 +16,9 @@ Work items. Reference the ID they advance.
       decay_t_max_s editable in the web UI and persisted. Confirmed working on hardware
       2026-06-24 (exponential). (R33)
 - [ ] Keypresses-per-minute counter: log count + timestamp to file every minute. (R34)
-- [ ] Web UI visual polish: margins, typography, labels. (R35)
+- [x] Web UI visual polish: margins, typography, labels. Done — themed dark page with
+      status strip, live beam strip, and grouped/labelled settings sections in web.py;
+      verified via flask test client (render + settings round-trip). (R35)
 - [ ] Web UI keypresses-per-minute graph (time-series, drawn from R34 log). (R36)
 - [ ] Live WebSocket feed: push key/laser state and log stream to the browser. (R37)
 - [ ] Chord detection: edge-detected, evaluated each DMX tick from KeyState; active
