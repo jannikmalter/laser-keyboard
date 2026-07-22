@@ -25,8 +25,11 @@ Work items. Reference the ID they advance.
       frames) and /logs (JSON lines) via flask-sock; page paints 32-key + 40-beam rows on
       requestAnimationFrame and auto-reconnects. Verified end-to-end locally; not yet seen
       on the Pi browser with live bars. (R37)
-- [ ] Chord detection: edge-detected, evaluated each DMX tick from KeyState; active
-      chords held in the DMX thread (standalone counterpart to QLC+ R8/R9). (R38)
+- [ ] Chord detection: quality-based (chords.py) — held keys reduced to pitch classes,
+      matched as a major/minor triad (any root/inversion), edge-detected each DMX tick
+      from KeyState; active effect held in the DMX thread. Every major chord → wave,
+      every minor chord → lightning (config.chord_effects). Dry-sim verified; confirm on
+      the Pi + bars. (R38)
 - [ ] Effects engine: whole-40-beam channel enumeration + drive all 4 bars' channel 1
       to per-beam mode; closed-form effects overlaid in dmx_thread._render() at the
       existing TODO(milestone-2) lines, composited (max) with per-key beams. (R39)

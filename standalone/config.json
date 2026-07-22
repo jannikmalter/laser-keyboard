@@ -1,0 +1,33 @@
+{
+  "midi_port_name": "",
+  "base_note": 41,
+  "key_count": 32,
+  "artnet_mode": "broadcast",
+  "artnet_ip": "255.255.255.255",
+  "artnet_universe": 0,
+  "artnet_port": 6454,
+  "tick_hz": 200.0,
+  "master_brightness": 255,
+  "decay_mode": "exponential",
+  "decay_t_min_s": 0.2,
+  "decay_t_max_s": 0.5,
+  "chord_effects": {
+    "major": "wave",
+    "minor": "lightning"
+  },
+  "lightning_flash_hz": 50.0,
+  "lightning_on_fraction": 0.1,
+  "wave_period_s": 0.5,
+  "wave_decay_s": 0.1,
+  "bar_base_addresses": [
+    0,
+    13,
+    26,
+    39
+  ],
+  "beams_per_bar": 10,
+  "beam_channel_offset": 3,
+  "web_host": "0.0.0.0",
+  "web_port": 8088,
+  "log_level": "INFO"
+}

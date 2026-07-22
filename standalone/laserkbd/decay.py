@@ -16,7 +16,10 @@ chosen by `mode`:
   * "linear" — brightness ramps straight from master to 0 over `t` seconds, then
     stays off. `t` is the full fade duration.
 
-Note-off is handled by the caller (velocity drops to 0 -> beam off immediately).
+This is a pure function of elapsed time and knows nothing about held vs released:
+note-off no longer cuts the beam (state.py keeps velocity/onset past release), so the
+same curve plays out whether or not the key is still held. The caller stops calling it
+for a key only once velocity is 0 (never struck).
 """
 
 from __future__ import annotations
@@ -33,10 +36,11 @@ def decay_time(velocity: int, min_s: float, max_s: float) -> float:
 
 def beam_brightness(velocity: int, elapsed: float, master: int,
                     mode: str, min_s: float, max_s: float) -> int:
-    """Brightness 0..master for a held key, `elapsed` seconds after its strike.
+    """Brightness 0..master for a struck key, `elapsed` seconds after its strike.
 
     Returns master at the moment of the strike and decays per `mode` over the
-    velocity-selected time; stays effectively off once decayed, while still held."""
+    velocity-selected time; stays effectively off once decayed. Applies the same whether
+    the key is still held or already released — the fade plays out either way (R33)."""
     if velocity <= 0:
         return 0
     t = decay_time(velocity, min_s, max_s)

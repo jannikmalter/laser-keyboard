@@ -34,6 +34,10 @@ def setup_logging(level: str) -> RingBufferHandler:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     root.handlers = [console, ring]
+    # Quiet the Flask dev server's per-request access log (B9): every web request — incl.
+    # high-frequency virtual-keyboard input — was logged at INFO, and those lines streamed
+    # back to the browser's log view, feeding a flood that bogged the page down.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
     return ring
 
 

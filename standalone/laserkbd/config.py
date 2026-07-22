@@ -35,7 +35,8 @@ class Config:
     # --- Simulated-piano decay (R33) ----------------------------------------
     # On note-on a beam lights at master_brightness and decays toward off; MIDI
     # velocity picks the decay time between these bounds (a hard hit lingers, a soft
-    # hit fades fast). Note-off switches the beam off at once (in the renderer).
+    # hit fades fast). Note-off does not cut the beam — the fade keeps playing to off
+    # (release only ends the key's held state; see state.py).
     decay_mode: str = "exponential"  # "exponential" | "linear"
     decay_t_min_s: float = 0.2      # decay time for the softest hit (velocity 1)
     decay_t_max_s: float = 1.0      # decay time for the hardest hit (velocity 127)
@@ -43,13 +44,12 @@ class Config:
     # linear -> full fade duration (brightness reaches 0 at elapsed == t).
 
     # --- Chord-triggered effects (R38-R41) ----------------------------------
-    # Each chord is a set of key indices that, held together, trigger a named effect
-    # (see effects.py: "lightning" | "wave"). Kept as data so the mapping can move to
-    # the web UI later. Defaults reuse two QLC+ chord shapes (F1, A1).
-    chords: list[dict] = field(default_factory=lambda: [
-        {"keys": [0, 4, 7], "effect": "lightning"},
-        {"keys": [4, 8, 11], "effect": "wave"},
-    ])
+    # Chord *quality* (not a fixed key set) selects the effect: the held keys, reduced to
+    # pitch classes, are matched as a major or minor triad (chords.py), and this maps the
+    # quality name to a named effect (effects.py: "lightning" | "wave"). So every major
+    # chord triggers one effect and every minor chord the other, at any root/inversion.
+    chord_effects: dict[str, str] = field(
+        default_factory=lambda: {"major": "wave", "minor": "lightning"})
     # Laser lightning (R40): all 40 beams flash on/off at random.
     lightning_flash_hz: float = 20.0     # re-randomise rate, decoupled from tick_hz
     lightning_on_fraction: float = 0.5   # fraction of beams lit per flash (0..1)

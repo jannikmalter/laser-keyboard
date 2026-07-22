@@ -312,6 +312,7 @@ _PAGE = """
 
  // ---- live log stream (JSON lines over /logs) ---------------------------
  var logbox = document.getElementById('logbox');
+ var MAX_LOG_LINES = 500;   // cap the box so streamed lines can't grow it unbounded (B9)
  function connectLogs(){
    var ws = new WebSocket(wsURL('/logs'));
    ws.onmessage = function(e){
@@ -319,6 +320,9 @@ _PAGE = """
      if(!msg.lines || !msg.lines.length) return;
      var atBottom = logbox.scrollTop + logbox.clientHeight >= logbox.scrollHeight - 4;
      logbox.textContent += (logbox.textContent ? '\\n' : '') + msg.lines.join('\\n');
+     var lines = logbox.textContent.split('\\n');
+     if(lines.length > MAX_LOG_LINES)
+       logbox.textContent = lines.slice(lines.length - MAX_LOG_LINES).join('\\n');
      if(atBottom) logbox.scrollTop = logbox.scrollHeight;
    };
    ws.onclose = function(){ setTimeout(connectLogs, 1000); };
@@ -327,14 +331,26 @@ _PAGE = """
 
  // ---- interactive virtual keyboard (R42) --------------------------------
  // Click a key, or drag with the pointer held across the key row, to play; hold a
- // chord button to strike all its keys. Both POST to /input, which presses/releases
- // the same KeyState the MIDI thread drives, so the live feed paints them back.
+ // chord button to strike all its keys. Input rides the /input WebSocket (B9) so a
+ // glissando doesn't fire an HTTP request (and a werkzeug log line) per key crossed;
+ // it presses/releases the same KeyState the MIDI thread drives, so the live feed
+ // paints it back. Falls back to POST if the socket is down (e.g. no flask-sock).
  var INPUT_VELOCITY = 100;   // mouse has no velocity; use a medium-hard strike
+ var inputWS = null;
+ function connectInput(){
+   var ws = new WebSocket(wsURL('/input'));
+   ws.onopen  = function(){ inputWS = ws; };
+   ws.onclose = function(){ inputWS = null; setTimeout(connectInput, 1000); };
+   ws.onerror = function(){ try{ ws.close(); }catch(_){} };
+ }
  function sendInput(keys, down){
    if(!keys || !keys.length) return;
+   var msg = JSON.stringify({keys:keys, down:down, velocity:INPUT_VELOCITY});
+   if(inputWS && inputWS.readyState === 1){
+     try{ inputWS.send(msg); return; }catch(_){}
+   }
    fetch('/input', {method:'POST', headers:{'Content-Type':'application/json'},
-     body:JSON.stringify({keys:keys, down:down, velocity:INPUT_VELOCITY}),
-     keepalive:true}).catch(function(){});
+     body:msg, keepalive:true}).catch(function(){});
  }
 
  var keysWrap = document.getElementById('keys');
@@ -381,22 +397,63 @@ _PAGE = """
  logbox.scrollTop = logbox.scrollHeight;
  connectFrames();
  connectLogs();
+ connectInput();
 })();
 </script>
 </body></html>
 """
 
 
-def _register_websockets(app: Flask, live_bus: LiveBus | None,
+def _apply_input(state: KeyState, data: dict) -> None:
+    """Apply one virtual-keyboard input message to the shared KeyState (R42). Body:
+    {"keys": [idx, ...], "down": bool, "velocity": int}. Presses or releases the given
+    key indices — a chord is just its constituent keys; press()/release() guard the
+    range. Shared by the /input WebSocket (preferred) and the POST fallback (B9)."""
+    down = bool(data.get("down"))
+    try:
+        velocity = int(data.get("velocity", 100) or 100)
+    except (TypeError, ValueError):
+        velocity = 100
+    for k in data.get("keys", []):
+        try:
+            idx = int(k)
+        except (TypeError, ValueError):
+            continue
+        if down:
+            state.press(idx, velocity)
+        else:
+            state.release(idx)
+
+
+def _register_websockets(app: Flask, state: KeyState, live_bus: LiveBus | None,
                          log_buffer: RingBufferHandler) -> None:
     """Register the live feed (R37): /ws streams binary key+laser frames, /logs streams
-    new log lines as JSON. No-op if flask-sock is unavailable, so the page still works
-    (the strips just stay at their page-load snapshot). Each handler blocks on its source
-    and resends on a 10 s timeout so a dropped client is noticed and cleaned up."""
+    new log lines as JSON, and /input receives virtual-keyboard events (R42/B9). No-op if
+    flask-sock is unavailable, so the page still works (the strips stay at their page-load
+    snapshot and input falls back to POST). The /ws and /logs handlers block on their
+    source and resend on a 10 s timeout so a dropped client is noticed and cleaned up."""
     if Sock is None:
         log.warning("flask-sock not installed; live WebSocket feed disabled")
         return
     sock = Sock(app)
+
+    @sock.route("/input")
+    def ws_input(ws):  # pragma: no cover - exercised over a real socket
+        """Virtual-keyboard input over a WebSocket (R42/B9). Each text message is one
+        JSON event {keys, down, velocity}. Preferred over POST so a glissando doesn't fire
+        a request (and a werkzeug access-log line) per key crossed."""
+        while True:
+            try:
+                raw = ws.receive()
+            except Exception:
+                break
+            if raw is None:   # client disconnected
+                break
+            try:
+                data = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            _apply_input(state, data)
 
     @sock.route("/ws")
     def ws_frames(ws):  # pragma: no cover - exercised over a real socket
@@ -433,7 +490,7 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
     app.config["_scanned"] = False
     app.config["_midi_ports"] = []
     app.config["_midi_scanned"] = False
-    _register_websockets(app, live_bus, log_buffer)
+    _register_websockets(app, state, live_bus, log_buffer)
 
     from . import __version__
 
@@ -441,10 +498,14 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
         cfg = config.get()
         editable = {name: getattr(cfg, name) for name in _EDITABLE}
         target = cfg.artnet_ip if cfg.artnet_mode == "unicast" else "broadcast"
-        beams = [v for v, _ in state.snapshot()]
-        # Chord buttons (R42). `idxs`/`name` avoid Jinja's dict-`.keys` method clash.
-        chords = [{"idxs": c.get("keys", []), "name": c.get("effect", "") or "chord"}
-                  for c in cfg.chords]
+        beams = [v if h else 0 for v, _, h in state.snapshot()]
+        # Chord buttons (R42): detection is quality-based now (R38), so there's no fixed
+        # chord list to enumerate. Offer one example triad per configured quality that a
+        # UI user can hold to trigger its effect. `idxs`/`name` avoid Jinja's dict-`.keys`
+        # method clash. Any transposition of these would trigger the same effect.
+        _example = {"major": [0, 4, 7], "minor": [0, 3, 7]}
+        chords = [{"idxs": _example[q], "name": "%s → %s" % (q, eff)}
+                  for q, eff in cfg.chord_effects.items() if q in _example]
         return render_template_string(
             _PAGE,
             version=__version__,
@@ -469,25 +530,10 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
 
     @app.post("/input")
     def input_keys():
-        """Virtual-keyboard input from the web UI (R42). Body: JSON
-        {"keys": [idx, ...], "down": bool, "velocity": int}. Presses or releases the
-        given key indices into the same KeyState the MIDI thread drives — a chord is
-        just its constituent keys. press()/release() guard the index range."""
-        data = request.get_json(silent=True) or {}
-        down = bool(data.get("down"))
-        try:
-            velocity = int(data.get("velocity", 100) or 100)
-        except (TypeError, ValueError):
-            velocity = 100
-        for k in data.get("keys", []):
-            try:
-                idx = int(k)
-            except (TypeError, ValueError):
-                continue
-            if down:
-                state.press(idx, velocity)
-            else:
-                state.release(idx)
+        """Virtual-keyboard input fallback (R42). The page prefers the /input WebSocket
+        (B9) and only POSTs here when flask-sock is absent or the socket is down. Shares
+        _apply_input with the WebSocket handler."""
+        _apply_input(state, request.get_json(silent=True) or {})
         return ("", 204)
 
     @app.post("/settings")

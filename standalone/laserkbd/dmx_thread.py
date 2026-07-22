@@ -6,8 +6,11 @@ ArtNet. Render and send share the tick so the frame computed is the frame sent.
 
 Per-key beams use the simulated-piano decay (R33): a strike lights the beam at full
 brightness and it decays (exponential or linear, configurable) over a velocity-
-selected time (see decay.py); note-off is immediate. Chord and full-keyboard effects
-are still Milestone 2 — see render() TODOs.
+selected time (see decay.py); note-off does not cut the beam — the fade keeps playing
+past release. On top of that, chord-triggered
+effects (R38-R41) are overlaid: the held chord's quality (major/minor, see chords.py)
+maps to a full-array effect (effects.py). The full-keyboard (12+ keys) bonus is the one
+piece still Milestone 2 — see render()'s remaining TODO.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import logging
 import threading
 import time
 
-from . import decay, effects, fixtures, live
+from . import chords, decay, effects, fixtures, live
 from .artnet import ArtNetSender
 from .config import Config, ConfigHolder
 from .live import LiveBus
@@ -36,9 +39,9 @@ class DmxThread(threading.Thread):
         self._dry_run = dry_run
         self._live = live_bus
         self._sender = ArtNetSender(dry_run=dry_run)
-        # Chord index -> monotonic trigger time. The one piece of effect state the DMX
+        # Effect name -> monotonic trigger time. The one piece of effect state the DMX
         # thread keeps; effects themselves are closed-form over now - trigger (R38/R39).
-        self._active_chords: dict[int, float] = {}
+        self._active_effects: dict[str, float] = {}
 
     def _render(self, cfg: Config, now: float) -> bytes:
         """Map held keys onto beam channels. Returns the DMX byte frame.
@@ -56,13 +59,15 @@ class DmxThread(threading.Thread):
                 frame[base] = fixtures.DMX_MODE_PER_BEAM
 
         held: set[int] = set()
-        for index, (velocity, onset) in enumerate(self._state.snapshot()):
+        for index, (velocity, onset, is_held) in enumerate(self._state.snapshot()):
+            if is_held:
+                held.add(index)          # physical key state, for chord detection
             if velocity <= 0:
-                continue  # released: leave the channel at 0 (beam off)
-            held.add(index)
+                continue  # never struck: leave the channel at 0 (beam off)
             # Simulated-piano decay (R33): full brightness at the strike, decaying to
-            # off (exponential or linear) over a velocity-selected time. Note-off is the
-            # velocity <= 0 case above (immediate off, no decay).
+            # off (exponential or linear) over a velocity-selected time. Note-off does
+            # NOT cut the beam — velocity/onset persist past release so the fade keeps
+            # playing (only `is_held` above clears, ending the key's held state).
             brightness = decay.beam_brightness(
                 velocity, now - onset, cfg.master_brightness,
                 cfg.decay_mode, cfg.decay_t_min_s, cfg.decay_t_max_s)
@@ -72,39 +77,36 @@ class DmxThread(threading.Thread):
             if channel is not None and channel < len(frame):
                 frame[channel] = brightness
 
-        # Chord-triggered effects (R38-R41): detect, then overlay onto the frame.
-        self._update_chords(cfg, held, now)
-        if self._active_chords:
+        # Chord-triggered effects (R38-R41): detect the held chord's quality, then
+        # overlay its mapped effect onto the frame.
+        self._update_effects(cfg, held, now)
+        if self._active_effects:
             self._overlay_effects(cfg, frame, now)
         # TODO(milestone-2): overlay full-keyboard (held_count >= 12) bonus effect.
         return bytes(frame)
 
-    def _update_chords(self, cfg: Config, held: set[int], now: float) -> None:
-        """Edge-detect chords from the held keys: stamp a trigger time when a chord
-        first completes, drop it when any of its keys is released (R38)."""
-        for i, chord in enumerate(cfg.chords):
-            keys = chord.get("keys", [])
-            complete = bool(keys) and held.issuperset(keys)
-            if complete and i not in self._active_chords:
-                self._active_chords[i] = now   # just completed -> start its effect
-            elif not complete and i in self._active_chords:
-                del self._active_chords[i]      # broken -> effect ends
-        # A live config edit can shrink cfg.chords; forget any now-stale indices.
-        for i in [i for i in self._active_chords if i >= len(cfg.chords)]:
-            del self._active_chords[i]
+    def _update_effects(self, cfg: Config, held: set[int], now: float) -> None:
+        """Edge-detect the effect driven by the held chord's quality (R38/R39). The held
+        keys form at most one major/minor triad (chords.quality), which cfg.chord_effects
+        maps to at most one effect: stamp a trigger time when that effect first becomes
+        active, drop it when the chord is released or its quality changes."""
+        wanted = cfg.chord_effects.get(chords.quality(held) or "")
+        for name in [n for n in self._active_effects if n != wanted]:
+            del self._active_effects[name]     # chord released/changed -> effect ends
+        if wanted and wanted not in self._active_effects:
+            self._active_effects[wanted] = now  # chord just completed -> start its effect
 
     def _overlay_effects(self, cfg: Config, frame: bytearray, now: float) -> None:
-        """Render each active chord's effect over the full 40-beam array and composite
-        it onto the frame, taking the per-channel max so held per-key beams still read
-        through (R39). Effects can light any bar, so put every bar in per-beam mode."""
+        """Render each active effect over the full 40-beam array and composite it onto
+        the frame, taking the per-channel max so held per-key beams still read through
+        (R39). Effects can light any bar, so put every bar in per-beam mode."""
         for base in fixtures.all_bar_bases(cfg):
             if base < len(frame):
                 frame[base] = fixtures.DMX_MODE_PER_BEAM
         channels = fixtures.all_beam_channels(cfg)
         # Oldest-triggered first; later effects max over earlier ones.
-        for i in sorted(self._active_chords, key=self._active_chords.__getitem__):
-            chord = cfg.chords[i]
-            levels = effects.render(chord.get("effect", ""), now - self._active_chords[i],
+        for name in sorted(self._active_effects, key=self._active_effects.__getitem__):
+            levels = effects.render(name, now - self._active_effects[name],
                                     len(channels), cfg)
             for beam, level in enumerate(levels):
                 if level <= 0 or beam >= len(channels):
@@ -121,7 +123,7 @@ class DmxThread(threading.Thread):
     def _publish_live(self, cfg: Config, frame: bytes) -> None:
         """Publish a live-viz snapshot for the web UI (R37): key velocities (input) and
         the 40 rendered beam brightnesses (output, read back out of the DMX frame)."""
-        keys = [v for v, _ in self._state.snapshot()]
+        keys = [v if h else 0 for v, _, h in self._state.snapshot()]
         beams = [frame[ch] if ch < len(frame) else 0
                  for ch in fixtures.all_beam_channels(cfg)]
         self._live.publish(live.encode_frame(keys, beams))

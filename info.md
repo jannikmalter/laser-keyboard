@@ -68,15 +68,18 @@ This is a setup prerequisite for R27 (run on the Pi); see `standalone/README.md`
 ## How the standalone render works
 
 The render loop in `dmx_thread._render()` rebuilds a **fresh zeroed** DMX frame every
-tick, so a beam is lit only if it is written this tick — released beams fall to off
-with no per-frame persistence. Each tick it sets every active bar's channel 1 to
-per-beam mode (see the BeamBar note below), then drives the per-key beams via the
-**simulated-piano decay** (R33):
+tick, so a beam is lit only if it is written this tick — a fully-decayed beam is simply
+not written, so it's off, with no per-frame persistence. Each tick it sets every active
+bar's channel 1 to per-beam mode (see the BeamBar note below), then drives the per-key
+beams via the **simulated-piano decay** (R33):
 
-- `state.py` stores, per key, the held velocity (`0` = released) **and** a
-  `time.monotonic()` onset stamped on each strike (re-pressing a held key resets the
-  onset → re-struck string). Velocity and onset are snapshotted together under one
-  lock so the renderer never pairs mismatched values.
+- `state.py` stores, per key, the strike velocity (`1–127`), a `time.monotonic()` onset
+  stamped on each strike (re-pressing a held key resets the onset → re-struck string),
+  **and** a separate `held` flag that is true only while the key is physically pressed.
+  Velocity/onset are kept even after release (only `held` clears) so the beam keeps
+  decaying past note-off (see the note-off bullet). All three are snapshotted together
+  under one lock so the renderer never pairs mismatched values; `held` (not velocity)
+  is what drives chord detection, held-count and the input-row viz.
 - `decay.py` is the pure curve, evaluated closed-form each tick (no integrated
   state), so it's jitter-proof and instantly responsive to a live config change. The
   shape is selectable via `decay_mode`:
@@ -89,9 +92,12 @@ per-beam mode (see the BeamBar note below), then drives the per-key beams via th
   ~1 s after a full-velocity hit). All three are editable in the web UI and persisted.
   (We started with a smootherstep S-curve but switched: the keyboard tends to send
   full velocity and the S-curve's flat top hid the decay.)
-- **Note-off is immediate:** release sets velocity to 0, and the renderer skips
-  velocity-0 keys, so the beam switches off at once regardless of the decay. A key
-  held past its full decay also reads 0 (the string went silent while held).
+- **Note-off keeps fading:** release does **not** cut the beam. `release()` only clears
+  the `held` flag; velocity/onset persist, so the renderer keeps evaluating the same
+  decay curve and the fade plays out to off exactly as for a held key. A key held (or
+  released) past its full decay reads 0 (the string went silent). On MIDI disconnect
+  `release_all()` clears the held flags and the beams fade out — nothing stays stuck on
+  (R29). (This replaced the earlier immediate-off behaviour on 2026-07-20, by request.)
 
 The `now` passed into `_render()` is a `time.monotonic()` reading from the loop —
 the same clock `state.py` stamps onsets with, so `elapsed = now − onset` is correct
@@ -102,14 +108,21 @@ and immune to wall-clock jumps.
 After the per-key beams, `_render()` overlays **chord-triggered effects** — the
 standalone counterpart to the QLC+ chord handling, but rendered in Python.
 
-- **Detection (`_update_chords`).** `config.chords` is a list of
-  `{"keys": [...], "effect": name}` entries. Each tick the renderer builds the set of
-  held keys (velocity > 0) and edge-detects: a chord whose keys are all held and that
-  wasn't active gets stamped with the current monotonic time in
-  `DmxThread._active_chords` (chord index → trigger time); a chord that's no longer
-  fully held is dropped. That trigger time is **the only effect state the DMX thread
-  keeps** — the effects themselves are closed-form over `now − trigger`. A live config
-  edit that shrinks the list prunes now-stale indices.
+- **Detection (`chords.py` + `_update_effects`).** Detection is by chord **quality**, not
+  a fixed key set. `chords.quality(held)` reduces the held keys to distinct pitch classes
+  (mod 12) and returns `"major"` ({root, +4, +7}), `"minor"` ({root, +3, +7}) or `None` —
+  so *every* major chord (any root, any inversion/voicing, octave doublings folded in)
+  reads as major and every minor chord as minor. It's a plain triad only: exactly three
+  distinct pitch classes, so a fourth (e.g. a seventh) cancels it, and aug/dim/sus match
+  neither. (Major vs minor share the unordered gap set {3,4,5}; `quality` tells them apart
+  by testing each rotation for the ordered pair (4,3)→major or (3,4)→minor.) `config
+  .chord_effects` maps the quality name → effect name (default `major → wave`,
+  `minor → lightning`). Each tick `_update_effects` edge-detects: the held quality maps to
+  at most one effect; when that effect first becomes active it's stamped with the current
+  monotonic time in `DmxThread._active_effects` (effect name → trigger time), and it's
+  dropped when the chord breaks or its quality changes. That trigger time is **the only
+  effect state the DMX thread keeps** — the effects themselves are closed-form over
+  `now − trigger`. (At most one quality is held at once, so at most one effect is active.)
 - **Effects (`effects.py`).** Like `decay.py`, each effect is a pure function of
   elapsed time → a per-beam brightness array over **all 40 beams** (4 bars × 10), not
   just the 32 playable keys. `effects.render(name, elapsed, beam_count, cfg)` dispatches:
@@ -128,8 +141,8 @@ standalone counterpart to the QLC+ chord handling, but rendered in Python.
   per-key beam still reads through a sparse effect. Because effects address all 40
   beams, `fixtures.universe_size()` now spans every beam (≈52 channels) — the ArtNet
   node must be configured to forward at least that many channels.
-- **Config / web UI.** `chords` (the chord→effect map) lives in `config.json` only for
-  now; the numeric effect params (`lightning_flash_hz`, `lightning_on_fraction`,
+- **Config / web UI.** `chord_effects` (the quality→effect map) lives in `config.json`
+  only for now; the numeric effect params (`lightning_flash_hz`, `lightning_on_fraction`,
   `wave_period_s`, `wave_decay_s`) are in the web settings editor and persisted, so the
   look can be tuned live on hardware. The full-keyboard (12+ keys) bonus is not built
   yet (`TODO(milestone-2)` in `_render`).
@@ -180,19 +193,30 @@ The viz is also an **input**: the page plays the same `KeyState` the MIDI thread
 so a mouse/touch press is indistinguishable downstream from a physical key — decay, chord
 detection and effects all just work.
 
-- **Backend** is one small route, `POST /input`, body `{"keys":[idx,...], "down":bool,
-  "velocity":int}`. It calls `state.press(idx, velocity)` / `state.release(idx)` for each
-  index (those already guard the range); a chord is simply its constituent keys. Mouse has
-  no velocity, so the client sends a fixed medium-hard strike (`INPUT_VELOCITY = 100`).
+- **Backend.** Each event is `{"keys":[idx,...], "down":bool, "velocity":int}` applied by
+  the shared `_apply_input(state, data)` helper, which calls `state.press(idx, velocity)` /
+  `state.release(idx)` for each index (those already guard the range); a chord is simply its
+  constituent keys. Mouse has no velocity, so the client sends a fixed medium-hard strike
+  (`INPUT_VELOCITY = 100`). Two transports feed the same helper: the **`/input` WebSocket**
+  (preferred, registered in `_register_websockets`) and a **`POST /input`** fallback used
+  only when flask-sock is absent or the socket is down. The WebSocket was the fix for **B9**:
+  with POST, a glissando fired two requests per key crossed and werkzeug logged every one at
+  INFO; those access-log lines streamed back over `/logs` into the browser's log box (an
+  unbounded `textContent +=`), bogging the page down the longer you played. The WebSocket
+  produces no access log; werkzeug's logger is also pinned to WARNING in `setup_logging`, and
+  the client caps the log box at 500 lines — three independent guards against that flood.
 - **Key row** (`#keys .beam`, each tagged `data-i`): `pointerdown` captures the pointer and
   strikes the key under it; `pointermove` while held slides the strike — **one key at a
   time**, releasing the one left and striking the one entered (a glissando). `pointerup`/
   `pointercancel` on `window` ends the drag and releases. The cells are full-height so the
   hit target is the whole row (it no longer grows-on-press like the old bar viz).
-- **Chord row** (`.chord` buttons, built from `cfg.chords` in `render()` as `{idxs, name}`
-  — renamed off `keys`/`effect` to dodge Jinja resolving `chord.keys` to the dict's `.keys`
-  method): holding a button presses all its keys (lighting the chord's effect), releasing
-  or sliding off (`pointerleave`) releases them.
+- **Chord row** (`.chord` buttons): since detection is now quality-based (R38) there's no
+  fixed chord list, so `render()` builds one **example triad per configured quality** from
+  `cfg.chord_effects` — `{idxs, name}` (e.g. `major → wave` on keys `0·4·7`, `minor →
+  lightning` on `0·3·7`; `idxs`/`name` dodge Jinja resolving `chord.keys` to the dict's
+  `.keys` method). Holding a button presses those keys (so the held triad triggers its
+  effect exactly as a MIDI-played one would); releasing or sliding off (`pointerleave`)
+  releases them. Any transposition of the example would trigger the same effect.
 - **Stuck-key safety:** a press that never gets its release (tab closed mid-drag) is
   self-healing — a held key still decays to off in the renderer (R33), and physical play or
   a reload clears the state — so no explicit server-side timeout is needed.
