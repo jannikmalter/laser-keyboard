@@ -25,6 +25,10 @@ Work items. Reference the ID they advance.
 - [x] Web UI keypresses-per-minute graph (time-series, drawn from R34 log). Done —
       inline-SVG area chart in web.py (vanilla JS, no external lib, works offline),
       fed by /usage.json, refetched each minute. Confirm the render on a local run. (R36)
+- [x] All-lasers-on setup toggle: web button forces all 40 beams on at full brightness
+      for aiming. Done — transient _all_on Event on DmxThread (_light_all in _render),
+      POST /lasers/all-on, "All on" button by the Lasers row; not persisted. DMX logic
+      verified; confirm the button on a local run + on hardware. (R43)
 - [x] Live WebSocket feed: push key/laser state and log stream to the browser. Done —
       LiveBus (live.py) + per-tick 74-byte frames from dmx_thread; /ws (binary key+laser
       frames) and /logs (JSON lines) via flask-sock; page paints 32-key + 40-beam rows on

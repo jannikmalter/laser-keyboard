@@ -224,6 +224,18 @@ detection and effects all just work.
 There is **no new visualisation state**: the live `/ws` feed paints the pressed keys/beams
 back, so the click and the lit beam are the same round trip the MIDI path uses.
 
+## All-lasers-on setup toggle (R43)
+
+For aiming and positioning the bars you need every beam lit regardless of what's being
+played. The **"All on" button** next to the Lasers row `POST`s `/lasers/all-on`, which
+flips a transient `threading.Event` (`DmxThread._all_on`) and returns `{on: bool}` so the
+button reflects the state. While set, `_render` calls `_light_all` **last** (after per-key
+beams and effects), driving all four bars to per-beam mode and every one of the 40 beam
+channels to `master_brightness`, so it overrides everything. It is deliberately **not** in
+`Config` — it must never persist across a restart (a booted appliance must not come up with
+all lasers on). No extra viz plumbing: the live `/ws` feed reads beams back out of the
+rendered frame, so the laser row lights up as confirmation. Works under `--dry-run`.
+
 ## Keypress usage logging & graph (R34/R36)
 
 `usage.py` records how much the keyboard is played, for post-night analysis, and feeds a

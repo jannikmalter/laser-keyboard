@@ -85,7 +85,7 @@ def main() -> None:
     usage_thread.start()
 
     # Flask dev server runs in a daemon thread so the main thread can wait on signals.
-    app = create_app(state, holder, ring, live_bus, usage)
+    app = create_app(state, holder, ring, live_bus, usage, dmx)
 
     def run_web():
         try:

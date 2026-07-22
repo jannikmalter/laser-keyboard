@@ -42,6 +42,9 @@ class DmxThread(threading.Thread):
         # Effect name -> monotonic trigger time. The one piece of effect state the DMX
         # thread keeps; effects themselves are closed-form over now - trigger (R38/R39).
         self._active_effects: dict[str, float] = {}
+        # Setup aid (R43): while set, every beam is forced on at full brightness so the
+        # bars can be aimed. Transient (not in Config) — never persists across a restart.
+        self._all_on = threading.Event()
 
     def _render(self, cfg: Config, now: float) -> bytes:
         """Map held keys onto beam channels. Returns the DMX byte frame.
@@ -82,8 +85,34 @@ class DmxThread(threading.Thread):
         self._update_effects(cfg, held, now)
         if self._active_effects:
             self._overlay_effects(cfg, frame, now)
+        # Setup aid (R43): force every beam on at full brightness, over per-key beams and
+        # effects, so the bars can be aimed. Applied last so it wins.
+        if self._all_on.is_set():
+            self._light_all(cfg, frame)
         # TODO(milestone-2): overlay full-keyboard (held_count >= 12) bonus effect.
         return bytes(frame)
+
+    def _light_all(self, cfg: Config, frame: bytearray) -> None:
+        """Drive all four bars to per-beam mode and every one of the 40 beams to
+        master_brightness — the R43 all-lasers-on setup toggle."""
+        level = max(1, min(255, cfg.master_brightness))
+        for base in fixtures.all_bar_bases(cfg):
+            if base < len(frame):
+                frame[base] = fixtures.DMX_MODE_PER_BEAM
+        for ch in fixtures.all_beam_channels(cfg):
+            if ch < len(frame):
+                frame[ch] = level
+
+    def set_all_on(self, on: bool) -> None:
+        self._all_on.set() if on else self._all_on.clear()
+
+    def toggle_all_on(self) -> bool:
+        """Flip the all-lasers-on flag (R43); return the new state."""
+        self.set_all_on(not self._all_on.is_set())
+        return self._all_on.is_set()
+
+    def all_on(self) -> bool:
+        return self._all_on.is_set()
 
     def _update_effects(self, cfg: Config, held: set[int], now: float) -> None:
         """Edge-detect the effect driven by the held chord's quality (R38/R39). The held

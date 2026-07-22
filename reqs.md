@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-07-22 (R38–R41 confirmed on hardware; R34/R36 keypress usage logging + web SVG graph implemented)
+Status: Active · Updated: 2026-07-23 (R34/R36 keypress usage logging + web SVG graph; R43 all-lasers-on setup toggle)
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -66,6 +66,7 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☑ |
 | R41 | F    | The effects engine shall provide a "left-right wave" effect: while active, beams light in quick succession left→right→left, each beam fading with a decay tuned so it is nearly fully decayed by the time the sweep returns to it. | C | G2 | ☑ |
 | R42 | F    | The web UI shall be an interactive input: clicking a virtual key (or dragging with the mouse/touch held down across the key row) shall trigger the corresponding key press(es), and a row of buttons for each configured chord shall trigger that chord, all feeding the same key state as the MIDI keyboard. The layout shall stack lasers (top), keys (middle), chords (bottom). | S | G2 | ☑ |
+| R43 | F    | The web UI shall provide a toggle that turns **all 40 laser beams** on at once at full brightness (independent of key state, over all bars) as a setup/aiming aid. It is transient runtime state, **not persisted** across restarts. | S | G2 | ☑ |
 
 **Standalone status note (R15–R32).** Milestone 1 was validated on real hardware
 (Pi + keyboard + ArtNet node + BeamBar 10R) on 2026-06-24: keys drive the correct
@@ -112,6 +113,16 @@ total/peak. Core logic (counting, range guard, flush/reset, file reload, thread
 start/stop) verified directly; the page render is to be confirmed on a local run with
 Flask installed (this dev shell had no Flask). Note-off is *not* a keypress, so only
 note-on is counted.
+
+**R43 (all-lasers-on setup toggle). Implemented 2026-07-23.** For aiming/positioning the
+bars you need every beam lit regardless of what's played. `DmxThread` holds a transient
+`threading.Event` (`_all_on`); while set, `_render` drives all four bars to per-beam mode
+and every one of the 40 beam channels to `master_brightness`, applied last so it overrides
+per-key beams and effects. It is **not** in `Config` — it must not persist across a restart
+(a booted appliance shouldn't come up with all lasers on). The web UI has an "All lasers
+on" toggle button that `POST`s `/lasers/all-on` (flips the flag, returns `{on: bool}`); the
+button reflects the state and the live `/ws` laser row lights up as confirmation (beams are
+read back out of the rendered frame, so no extra plumbing). Works under `--dry-run`.
 
 **Note-off behaviour changed (2026-07-20):** release no longer cuts the beam. `state.py`
 keeps the strike velocity + onset after note-off and tracks a *separate* `held` flag, so

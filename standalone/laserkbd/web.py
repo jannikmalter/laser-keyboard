@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from flask import Flask, redirect, render_template_string, request, url_for
+
+if TYPE_CHECKING:
+    from .dmx_thread import DmxThread
 
 from . import artnet, fixtures
 from .config import ConfigHolder
@@ -156,6 +160,13 @@ _PAGE = """
    padding:.5rem 1.1rem;font-size:.88rem;font-weight:600;cursor:pointer}
  button:hover{background:var(--accent-soft)}
  .actions{margin-top:1rem}
+ /* all-lasers-on setup toggle (R43): muted when off, glowing accent when on */
+ .toggle{flex:none;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+   font-weight:600;padding:.35rem .7rem;font-size:.78rem;white-space:nowrap}
+ .toggle:hover{background:var(--panel-2);border-color:var(--accent-soft)}
+ .toggle.active{background:var(--accent);border-color:var(--accent);color:#fff;
+   box-shadow:0 0 10px 1px var(--accent)}
+ .toggle.active:hover{background:var(--accent-soft);border-color:var(--accent-soft)}
  .toolbar{display:flex;align-items:center;gap:.75rem;margin-bottom:.4rem}
  .toolbar button{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);font-weight:500}
  .toolbar button:hover{border-color:var(--accent-soft)}
@@ -195,6 +206,8 @@ _PAGE = """
    <div id="lasers" class="strip dots">
     {% for _ in range(beam_count) %}<span class="dot"></span>{% endfor %}
    </div>
+   <button type="button" id="allon" class="toggle {{ 'active' if all_on }}"
+     title="toggle all 40 beams on for setup / aiming">All on</button>
   </div>
   <div class="viz-row">
    <span class="viz-lbl">Keys</span>
@@ -479,6 +492,17 @@ _PAGE = """
  fetchUsage();
  setInterval(fetchUsage, 60000);   // a new point lands each minute
 
+ // ---- all-lasers-on setup toggle (R43) ----------------------------------
+ var allonBtn = document.getElementById('allon');
+ if(allonBtn){
+   allonBtn.addEventListener('click', function(){
+     fetch('/lasers/all-on', {method:'POST'}).then(function(r){ return r.json(); })
+       .then(function(d){ allonBtn.classList.toggle('active', !!d.on); })
+       .catch(function(){});
+     // the live /ws feed paints the lit beams back, so no manual dot update needed
+   });
+ }
+
  logbox.scrollTop = logbox.scrollHeight;
  connectFrames();
  connectLogs();
@@ -568,7 +592,8 @@ def _register_websockets(app: Flask, state: KeyState, live_bus: LiveBus | None,
 
 
 def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHandler,
-               live_bus: LiveBus | None = None, usage: UsageLog | None = None) -> Flask:
+               live_bus: LiveBus | None = None, usage: UsageLog | None = None,
+               dmx: "DmxThread | None" = None) -> Flask:
     app = Flask(__name__)
     # Last discovery result, kept in memory so it survives the redirect after a scan.
     app.config["_devices"] = []
@@ -600,6 +625,7 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
             beams=beams,
             chords=chords,
             beam_count=len(fixtures.all_beam_channels(cfg)),
+            all_on=(dmx.all_on() if dmx is not None else False),
             held=state.held_count(),
             target=target,
             devices=app.config["_devices"],
@@ -619,6 +645,14 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
         oldest first. Epoch in ms so the browser can feed it straight to Date()."""
         points = usage.history() if usage is not None else []
         return {"points": [[epoch * 1000, count] for epoch, count in points]}
+
+    @app.post("/lasers/all-on")
+    def toggle_all_on():
+        """Toggle the all-lasers-on setup aid (R43). Transient DMX-thread state, not
+        persisted. Returns the new state so the button can reflect it."""
+        on = dmx.toggle_all_on() if dmx is not None else False
+        log.info("all lasers on: %s", "ON" if on else "off")
+        return {"on": on}
 
     @app.post("/input")
     def input_keys():
