@@ -1,6 +1,6 @@
 # laser-keyboard — Requirements
 
-Status: Active · Updated: 2026-07-20 (R38/R39: chord detection generalised to chord *quality* — every major chord → wave, every minor chord → lightning)
+Status: Active · Updated: 2026-07-22 (R38–R41 confirmed on hardware; R34/R36 keypress usage logging + web SVG graph implemented)
 
 ## Goals
 Why this exists. Everything below traces to one of these.
@@ -57,14 +57,14 @@ the code as evidence. Standalone items (R15–R32) trace to **G2**; see status n
 | R31 | Q    | The standalone build shall survive power loss: on power restoration the appliance shall boot and resume operation unattended (systemd auto-start), and the on-disk config shall not be left corrupt by an abrupt power cut (atomic write/replace). | M | G2 | ☑ |
 | R32 | F    | The web UI shall list discovered MIDI input ports and let the user select one as the keyboard (sets `midi_port_name`). | S | G2 | ☑ |
 | R33 | F    | The standalone build shall implement a simulated-piano decay effect: on note-on the beam lights at full brightness and decays over time; the decay shape (linear or exponential) and its per-velocity time bounds (`t_min`/`t_max`) shall be selectable in the web UI and persisted (R24/R26); MIDI velocity controls the decay time (soft hit → fast decay, hard hit → slow decay); note-off shall **not** cut the beam — the fade continues to off exactly as for a held key (release only ends the held state used for chord detection, input viz and held-count). | M | G2 | ☑ |
-| R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☐ |
+| R34 | F    | The standalone build shall count note-on events and log keypresses-per-minute with a timestamp to a log file, enabling post-night analysis of keyboard usage. | M | G2 | ☑ |
 | R35 | Q    | The web UI shall be visually improved: better margins, typography, labelling, and overall layout. | S | G2 | ☑ |
-| R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☐ |
+| R36 | F    | The web UI shall display a time-series graph of keypresses per minute (X-axis: time, Y-axis: presses/min), drawn from the data logged by R34. | S | G2 | ☑ |
 | R37 | F    | The web UI shall maintain a live WebSocket connection: active keys/laser states shall update in real time (a 32-key input row + a 40-beam laser output row), and the log view shall stream new entries as they arrive. | C | G2 | ☑ |
-| R38 | F    | The standalone build shall detect chord *quality* from the held keys on each DMX tick with edge detection (trigger on completion, clear on release): the held keys reduced to distinct pitch classes (mod 12) forming exactly a **major** triad ({root, +4, +7}) or a **minor** triad ({root, +3, +7}) — any root, any inversion/voicing, octave doublings folded in; a fourth distinct pitch class cancels it. (Standalone counterpart to R8/R9, generalised from fixed key-sets to quality.) | S | G2 | ☐ |
-| R39 | F    | The standalone build shall provide a chord-triggered effects engine: a recognised chord quality (R38) activates its mapped named effect (config `chord_effects`; default **major → wave, minor → lightning**), which the DMX thread renders over all 40 beams (4 bars × 10), composited with the per-key beams; the effect deactivates when the chord is released. Effects are closed-form animations driven by elapsed time since trigger (like `decay.py`), so the renderer stays stateless. | S | G2 | ☐ |
-| R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☐ |
-| R41 | F    | The effects engine shall provide a "left-right wave" effect: while active, beams light in quick succession left→right→left, each beam fading with a decay tuned so it is nearly fully decayed by the time the sweep returns to it. | C | G2 | ☐ |
+| R38 | F    | The standalone build shall detect chord *quality* from the held keys on each DMX tick with edge detection (trigger on completion, clear on release): the held keys reduced to distinct pitch classes (mod 12) forming exactly a **major** triad ({root, +4, +7}) or a **minor** triad ({root, +3, +7}) — any root, any inversion/voicing, octave doublings folded in; a fourth distinct pitch class cancels it. (Standalone counterpart to R8/R9, generalised from fixed key-sets to quality.) | S | G2 | ☑ |
+| R39 | F    | The standalone build shall provide a chord-triggered effects engine: a recognised chord quality (R38) activates its mapped named effect (config `chord_effects`; default **major → wave, minor → lightning**), which the DMX thread renders over all 40 beams (4 bars × 10), composited with the per-key beams; the effect deactivates when the chord is released. Effects are closed-form animations driven by elapsed time since trigger (like `decay.py`), so the renderer stays stateless. | S | G2 | ☑ |
+| R40 | F    | The effects engine shall provide a "laser lightning" effect: while active, all 40 beams flash on/off at random and fast (re-randomised at a configurable flash rate, independent of the tick rate). | C | G2 | ☑ |
+| R41 | F    | The effects engine shall provide a "left-right wave" effect: while active, beams light in quick succession left→right→left, each beam fading with a decay tuned so it is nearly fully decayed by the time the sweep returns to it. | C | G2 | ☑ |
 | R42 | F    | The web UI shall be an interactive input: clicking a virtual key (or dragging with the mouse/touch held down across the key row) shall trigger the corresponding key press(es), and a row of buttons for each configured chord shall trigger that chord, all feeding the same key state as the MIDI keyboard. The layout shall stack lasers (top), keys (middle), chords (bottom). | S | G2 | ☑ |
 
 **Standalone status note (R15–R32).** Milestone 1 was validated on real hardware
@@ -78,8 +78,10 @@ unplug: laser switched off, then reconnected), and survives loss of the PoE cabl
 network cable cuts power and network together: ArtNet send errors are caught in
 `artnet.ArtNetSender.send` so the render loop keeps ticking, and on replug the unit
 boots unattended and resumes with an intact (atomically written) config. Milestone 1
-is therefore complete; remaining standalone work is Milestone 2 (effects) plus the
-new R34–R37. Design home for the resilience items: the "Resilience" section in
+is therefore complete; the first Milestone 2 slice (R38–R41: chords + effects) is now also
+hardware-confirmed (2026-07-22), and R34/R36 (keypress usage logging + web graph) are
+implemented (2026-07-22). The later Milestone 2 slices (12+ key bonus, broader effect
+parity) are the remaining standalone work. Design home for the resilience items: the "Resilience" section in
 `reqs/G2.md`. (There is no committed automated test suite; verification is by use +
 `--dry-run`.)
 
@@ -93,7 +95,23 @@ half-life, so ~50% brightness ~1 s after a full-velocity hit). All three are edi
 in the web UI and persisted. We started with a smootherstep S-curve but dropped it
 after on-hardware testing — the keyboard tends to fire full velocity and the S-curve's
 flat top hid the decay. **Confirmed working on hardware (2026-06-24)** in exponential
-mode. R34, R36 (usage logging, web keypress graph) remain ☐.
+mode.
+
+**R34/R36 (keypress usage logging + web graph). Implemented 2026-07-22.** `usage.py`
+holds a `UsageLog`: `record()` bumps a per-minute counter (wired to `KeyState.on_press`,
+so every strike — physical MIDI *and* the virtual web keyboard R42 — is counted at one
+choke point, outside the state lock), and a dedicated thread (`run()`, started/joined in
+`__main__`) wakes on each wall-clock minute boundary to append one line
+`YYYY-MM-DD HH:MM\tcount` to the log file (`keypress_log_file`, default
+`keypresses.log` next to `config.json`; config-only, since it's captured at startup). The
+whole series is kept in memory (deque capped at 14 days) and loaded from the file on
+startup, so a restart mid-run keeps the history. The web UI (R36) draws it as an
+**inline-SVG** area chart built with vanilla JS (`/usage.json` → `[[epoch_ms, count]]`;
+no external chart library, works offline), refetched each minute; caption shows
+total/peak. Core logic (counting, range guard, flush/reset, file reload, thread
+start/stop) verified directly; the page render is to be confirmed on a local run with
+Flask installed (this dev shell had no Flask). Note-off is *not* a keypress, so only
+note-on is counted.
 
 **Note-off behaviour changed (2026-07-20):** release no longer cuts the beam. `state.py`
 keeps the strike velocity + onset after note-off and tracks a *separate* `held` flag, so
@@ -146,15 +164,14 @@ composite with per-key beams, and the open decisions (chord definitions, chord�
 mapping, web-UI exposure). The full-keyboard (12+ keys) bonus (QLC+ R11) is a
 later slice and stays a `todo.md` item for now.
 
-**Implemented (2026-06-24), pending hardware confirmation.** `effects.py` (closed-form
+**Implemented and confirmed on hardware (2026-07-22).** `effects.py` (closed-form
 lightning + wave), effect params, `fixtures.all_beam_channels` /
 `all_bar_bases` (full 40-beam addressing) + a widened `universe_size`, and
 `DmxThread._update_effects` / `_overlay_effects` (edge-detected chords, max-composite
-overlay). The four numeric effect params are live-editable in the web UI. Verified by dry
-simulation (chord trigger/clear edges, both effects' output, frame compositing); **not yet
-run on the Pi + bars** — boxes stay ☐ until confirmed on hardware (as R33 was). NOTE:
-because effects address all 40 beams, the ArtNet node must forward ≥52 channels (up from
-the key-only ~44).
+overlay). The four numeric effect params are live-editable in the web UI. First verified by
+dry simulation (chord trigger/clear edges, both effects' output, frame compositing), then
+**confirmed on the Pi + BeamBars on 2026-07-22** — R38–R41 all ☑. NOTE: because effects
+address all 40 beams, the ArtNet node must forward ≥52 channels (up from the key-only ~44).
 
 **Chord detection is quality-based (2026-07-20).** R38/R39 were generalised from the
 original two fixed key-index sets to chord *quality*: `chords.py` reduces the held keys to
@@ -165,8 +182,8 @@ fire). `config.chord_effects` maps quality → effect name; default **major → 
 lightning**. At most one quality is held at a time, so at most one effect is active.
 `DmxThread._update_effects` edge-detects on the quality and keys `_active_effects` by effect
 name (was chord index). The web chord row (R42) now offers one example triad per configured
-quality. Replaces the old `config.chords` list. Verified by dry simulation; still ☐ pending
-hardware.
+quality. Replaces the old `config.chords` list. Verified by dry simulation and **confirmed
+on hardware 2026-07-22** (R38–R41 ☑).
 
 **R42 (interactive web keyboard, 2026-06-25).** The web UI became an input, not just a
 monitor. The viz rows were reordered to lasers / keys / chords (top→bottom); the key row

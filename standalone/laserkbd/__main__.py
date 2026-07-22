@@ -17,6 +17,7 @@ from .dmx_thread import DmxThread
 from .live import LiveBus
 from .log_buffer import RingBufferHandler
 from .state import KeyState
+from .usage import UsageLog
 from .web import create_app
 
 # MidiThread is imported lazily in main() so that --dry-run works without rtmidi.
@@ -58,7 +59,13 @@ def main() -> None:
         log.info("DRY RUN: simulated keyboard, ArtNet output suppressed")
 
     holder = ConfigHolder(config, args.config)
-    state = KeyState(config.key_count)
+    # Keypress usage log (R34): resolve a relative path next to the config file.
+    usage_path = Path(config.keypress_log_file)
+    if not usage_path.is_absolute():
+        usage_path = args.config.parent / usage_path
+    usage = UsageLog(usage_path)
+    # on_press counts every strike (physical MIDI + virtual web keyboard) at one choke point.
+    state = KeyState(config.key_count, on_press=usage.record)
     live_bus = LiveBus()   # DMX thread publishes frames; web streams them (R37)
     stop_event = threading.Event()
 
@@ -72,8 +79,13 @@ def main() -> None:
     midi.start()
     dmx.start()
 
+    # Per-minute keypress flusher (R34): its own thread, joined on shutdown.
+    usage_thread = threading.Thread(target=usage.run, args=(stop_event,),
+                                    name="usage", daemon=True)
+    usage_thread.start()
+
     # Flask dev server runs in a daemon thread so the main thread can wait on signals.
-    app = create_app(state, holder, ring, live_bus)
+    app = create_app(state, holder, ring, live_bus, usage)
 
     def run_web():
         try:
@@ -99,6 +111,7 @@ def main() -> None:
     stop_event.wait()
     midi.join(timeout=3)
     dmx.join(timeout=3)
+    usage_thread.join(timeout=3)
     log.info("stopped")
 
 

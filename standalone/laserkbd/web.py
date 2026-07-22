@@ -24,6 +24,7 @@ from .config import ConfigHolder
 from .live import LiveBus
 from .log_buffer import RingBufferHandler
 from .state import KeyState
+from .usage import UsageLog
 
 try:
     from flask_sock import Sock
@@ -168,6 +169,10 @@ _PAGE = """
  .logs{background:#070809;color:#7CFC9A;border:1px solid var(--line);border-radius:8px;
    padding:.7rem .8rem;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
    font-size:.78rem;line-height:1.45;height:17rem;overflow:auto;white-space:pre-wrap}
+
+ /* keypress-usage graph (R36): inline SVG, drawn with vanilla JS, no external lib */
+ .usage{width:100%;height:170px;display:block;background:var(--panel-2);
+   border:1px solid var(--line);border-radius:8px}
 </style></head><body>
 <div class="wrap">
 
@@ -211,6 +216,12 @@ _PAGE = """
    {% endif %}
   </div>
  </div>
+
+ <section>
+  <h2>Keyboard usage · presses per minute</h2>
+  <svg id="usage" class="usage" preserveAspectRatio="none"></svg>
+  <p id="usage-cap" class="empty" style="margin:.55rem 0 0">loading…</p>
+ </section>
 
  <form method="post" action="{{ url_for('settings') }}">
   {% for group, items in groups %}
@@ -394,6 +405,80 @@ _PAGE = """
    btn.addEventListener('pointercancel', up);
  });
 
+ // ---- keypress-usage graph (R36): inline SVG, no external chart lib ------
+ var SVGNS = 'http://www.w3.org/2000/svg';
+ var usageSvg = document.getElementById('usage');
+ var usageCap = document.getElementById('usage-cap');
+ var usagePoints = [];
+ function svgEl(name, attrs){
+   var el = document.createElementNS(SVGNS, name);
+   for(var k in attrs) el.setAttribute(k, attrs[k]);
+   return el;
+ }
+ function fmtClock(ms){
+   var d = new Date(ms);
+   function p(n){ return (n<10?'0':'')+n; }
+   return p(d.getHours())+':'+p(d.getMinutes());
+ }
+ function drawUsage(){
+   if(!usageSvg) return;
+   while(usageSvg.firstChild) usageSvg.removeChild(usageSvg.firstChild);
+   var W = usageSvg.clientWidth || 600, H = usageSvg.clientHeight || 170;
+   usageSvg.setAttribute('viewBox', '0 0 '+W+' '+H);
+   var pts = usagePoints;
+   if(!pts.length){
+     if(usageCap) usageCap.textContent =
+       'no data yet — the first point appears after a minute of play';
+     return;
+   }
+   var padL=34, padR=10, padT=12, padB=20;
+   var t0=pts[0][0], t1=pts[pts.length-1][0];
+   var maxC=1, total=0;
+   for(var i=0;i<pts.length;i++){ if(pts[i][1]>maxC) maxC=pts[i][1]; total+=pts[i][1]; }
+   var spanT = Math.max(60000, t1-t0);
+   var plotW=W-padL-padR, plotH=H-padT-padB;
+   function X(t){ return padL + (t-t0)/spanT*plotW; }
+   function Y(c){ return padT + (1 - c/maxC)*plotH; }
+   // horizontal gridlines + y labels at max and 0
+   [maxC, 0].forEach(function(c){
+     var yy = Y(c);
+     usageSvg.appendChild(svgEl('line', {x1:padL, y1:yy, x2:W-padR, y2:yy,
+       stroke:'#2a2e3b', 'stroke-width':1}));
+     var tx = svgEl('text', {x:padL-5, y:yy+3, fill:'#9097a6', 'font-size':10,
+       'text-anchor':'end'});
+     tx.textContent = c; usageSvg.appendChild(tx);
+   });
+   // filled area + top line
+   var area='M '+X(t0).toFixed(1)+' '+Y(0).toFixed(1), line='';
+   for(var j=0;j<pts.length;j++){
+     var px=X(pts[j][0]).toFixed(1), py=Y(pts[j][1]).toFixed(1);
+     area += ' L '+px+' '+py;
+     line += (j?' L ':'M ')+px+' '+py;
+   }
+   area += ' L '+X(t1).toFixed(1)+' '+Y(0).toFixed(1)+' Z';
+   usageSvg.appendChild(svgEl('path', {d:area, fill:'rgba(255,43,70,.18)', stroke:'none'}));
+   usageSvg.appendChild(svgEl('path', {d:line, fill:'none', stroke:'#ff6076',
+     'stroke-width':1.5, 'stroke-linejoin':'round', 'stroke-linecap':'round'}));
+   // x time labels at both ends
+   var lx = svgEl('text', {x:padL, y:H-6, fill:'#9097a6', 'font-size':10,
+     'text-anchor':'start'}); lx.textContent = fmtClock(t0); usageSvg.appendChild(lx);
+   var rx = svgEl('text', {x:W-padR, y:H-6, fill:'#9097a6', 'font-size':10,
+     'text-anchor':'end'}); rx.textContent = fmtClock(t1); usageSvg.appendChild(rx);
+   if(usageCap) usageCap.textContent =
+     pts.length+' min · '+total+' presses total · peak '+maxC+'/min';
+ }
+ function fetchUsage(){
+   fetch('/usage.json').then(function(r){ return r.json(); })
+     .then(function(d){ usagePoints = d.points || []; drawUsage(); })
+     .catch(function(){});
+ }
+ var usageResizeT;
+ window.addEventListener('resize', function(){
+   clearTimeout(usageResizeT); usageResizeT = setTimeout(drawUsage, 150);
+ });
+ fetchUsage();
+ setInterval(fetchUsage, 60000);   // a new point lands each minute
+
  logbox.scrollTop = logbox.scrollHeight;
  connectFrames();
  connectLogs();
@@ -483,7 +568,7 @@ def _register_websockets(app: Flask, state: KeyState, live_bus: LiveBus | None,
 
 
 def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHandler,
-               live_bus: LiveBus | None = None) -> Flask:
+               live_bus: LiveBus | None = None, usage: UsageLog | None = None) -> Flask:
     app = Flask(__name__)
     # Last discovery result, kept in memory so it survives the redirect after a scan.
     app.config["_devices"] = []
@@ -527,6 +612,13 @@ def create_app(state: KeyState, config: ConfigHolder, log_buffer: RingBufferHand
     @app.get("/")
     def index():
         return render()
+
+    @app.get("/usage.json")
+    def usage_data():
+        """Keypress-per-minute series for the graph (R36): [[epoch_ms, count], ...],
+        oldest first. Epoch in ms so the browser can feed it straight to Date()."""
+        points = usage.history() if usage is not None else []
+        return {"points": [[epoch * 1000, count] for epoch, count in points]}
 
     @app.post("/input")
     def input_keys():

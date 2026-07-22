@@ -67,6 +67,10 @@ class Config:
     web_host: str = "0.0.0.0"
     web_port: int = 8088   # 8080 is commonly taken/reserved on Windows; change if busy
     log_level: str = "INFO"
+    # Keypress-usage log (R34): one line per minute (`timestamp<TAB>count`). Relative
+    # paths resolve next to config.json. Not exposed in the web form: it is read once at
+    # startup (UsageLog captures it), so changing it live wouldn't move existing data.
+    keypress_log_file: str = "keypresses.log"
 
     @classmethod
     def load(cls, path: Path) -> "Config":

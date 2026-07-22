@@ -224,6 +224,35 @@ detection and effects all just work.
 There is **no new visualisation state**: the live `/ws` feed paints the pressed keys/beams
 back, so the click and the lit beam are the same round trip the MIDI path uses.
 
+## Keypress usage logging & graph (R34/R36)
+
+`usage.py` records how much the keyboard is played, for post-night analysis, and feeds a
+graph on the web page.
+
+- **Counting.** `UsageLog.record()` bumps a per-minute counter. It's wired to
+  `KeyState.on_press` (a new optional callback fired once per in-range strike, **outside**
+  the state lock so it can take its own lock without nesting), so *every* note-on is counted
+  at the single `state.press()` choke point — physical MIDI and the virtual web keyboard
+  (R42) alike. Note-off is not a keypress, so only strikes count; a re-struck held key
+  counts again (it's a new note-on).
+- **Per-minute flush.** A dedicated thread (`UsageLog.run()`, started and joined in
+  `__main__` under the shared `stop_event`, R28) sleeps to each wall-clock minute boundary,
+  then snapshots+resets the counter and appends one line
+  `YYYY-MM-DD HH:MM\tcount` to the log file. Timestamps land on `:00`; the partial minute
+  in progress at shutdown is dropped (an incomplete count would skew the graph).
+- **File + in-memory series.** The file is append-only (a 3-day night ≈ 4320 lines; not
+  rotated). The same series is held in memory (a deque capped at 14 days) and **loaded from
+  the file on startup**, so a restart mid-run keeps the history. The log path is
+  `config.keypress_log_file` (default `keypresses.log` next to `config.json`; relative paths
+  resolve there). It is **config-only, not in the web form**: `UsageLog` captures the path
+  at startup, so editing it live wouldn't move existing data.
+- **Web graph.** `GET /usage.json` returns `{"points": [[epoch_ms, count], ...]}` (oldest
+  first). The page draws it as an **inline-SVG** area+line chart built with vanilla JS
+  (`drawUsage`) — **no external chart library**, so it works with no internet access. It's
+  refetched every 60 s (a new point per minute) and redrawn on resize; the caption shows
+  total presses and peak/min. Works under `--dry-run` too (the simulated keyboard drives
+  `state.press`, so the counter and graph populate without hardware).
+
 ## How the QLC+ mapping works
 
 - **Note offset:** incoming notes are shifted by `-41` so the playable range becomes

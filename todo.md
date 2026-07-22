@@ -15,28 +15,35 @@ Work items. Reference the ID they advance.
       decay time) + state.py onset timestamps + dmx_thread._render(); mode/decay_t_min_s/
       decay_t_max_s editable in the web UI and persisted. Confirmed working on hardware
       2026-06-24 (exponential). (R33)
-- [ ] Keypresses-per-minute counter: log count + timestamp to file every minute. (R34)
+- [x] Keypresses-per-minute counter: log count + timestamp to file every minute. Done —
+      usage.py (UsageLog: record() via KeyState.on_press, per-minute flusher thread,
+      appends "YYYY-MM-DD HH:MM\tcount" to keypresses.log, loads history on startup).
+      Core logic verified; web render to confirm on a local Flask run. (R34)
 - [x] Web UI visual polish: margins, typography, labels. Done — themed dark page with
       status strip, live beam strip, and grouped/labelled settings sections in web.py;
       verified via flask test client (render + settings round-trip). (R35)
-- [ ] Web UI keypresses-per-minute graph (time-series, drawn from R34 log). (R36)
+- [x] Web UI keypresses-per-minute graph (time-series, drawn from R34 log). Done —
+      inline-SVG area chart in web.py (vanilla JS, no external lib, works offline),
+      fed by /usage.json, refetched each minute. Confirm the render on a local run. (R36)
 - [x] Live WebSocket feed: push key/laser state and log stream to the browser. Done —
       LiveBus (live.py) + per-tick 74-byte frames from dmx_thread; /ws (binary key+laser
       frames) and /logs (JSON lines) via flask-sock; page paints 32-key + 40-beam rows on
       requestAnimationFrame and auto-reconnects. Verified end-to-end locally; not yet seen
       on the Pi browser with live bars. (R37)
-- [ ] Chord detection: quality-based (chords.py) — held keys reduced to pitch classes,
+- [x] Chord detection: quality-based (chords.py) — held keys reduced to pitch classes,
       matched as a major/minor triad (any root/inversion), edge-detected each DMX tick
       from KeyState; active effect held in the DMX thread. Every major chord → wave,
-      every minor chord → lightning (config.chord_effects). Dry-sim verified; confirm on
-      the Pi + bars. (R38)
-- [ ] Effects engine: whole-40-beam channel enumeration + drive all 4 bars' channel 1
+      every minor chord → lightning (config.chord_effects). Confirmed on the Pi + bars
+      2026-07-22. (R38)
+- [x] Effects engine: whole-40-beam channel enumeration + drive all 4 bars' channel 1
       to per-beam mode; closed-form effects overlaid in dmx_thread._render() at the
-      existing TODO(milestone-2) lines, composited (max) with per-key beams. (R39)
-- [ ] Effect: laser lightning — all 40 beams flash random/fast at a configurable
-      flash rate, decoupled from tick_hz. (R40)
-- [ ] Effect: left-right wave — Larson sweep 0→39→0, per-beam decay tuned to the sweep
-      period so a beam nearly fully decays before the head returns. (R41)
+      existing TODO(milestone-2) lines, composited (max) with per-key beams. Confirmed
+      on hardware 2026-07-22. (R39)
+- [x] Effect: laser lightning — all 40 beams flash random/fast at a configurable
+      flash rate, decoupled from tick_hz. Confirmed on hardware 2026-07-22. (R40)
+- [x] Effect: left-right wave — Larson sweep 0→39→0, per-beam decay tuned to the sweep
+      period so a beam nearly fully decays before the head returns. Confirmed on hardware
+      2026-07-22. (R41)
 - [ ] Milestone 2 (later): full-keyboard (12+ keys) bonus effect (QLC+ R11 counterpart). (G2)
 - [ ] Milestone 2 (later): effect parity with the old QLC+ set as desired (waves,
       rainbow, gewitter, strobe, chases) via the same engine. (G2)

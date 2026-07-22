@@ -20,16 +20,21 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Callable, Optional
 
 
 class KeyState:
-    def __init__(self, key_count: int):
+    def __init__(self, key_count: int, on_press: Optional[Callable[[], None]] = None):
         self._lock = threading.Lock()
         self._velocity = [0] * key_count    # last strike velocity; kept after release
         self._onset = [0.0] * key_count     # time.monotonic() of the last strike
         self._held = [False] * key_count    # True only while physically pressed
+        # Optional per-keypress hook (R34): fired once per in-range strike, from whichever
+        # thread pressed. Called *outside* the lock so it can take its own (usage counter).
+        self._on_press = on_press
 
     def press(self, index: int, velocity: int) -> None:
+        struck = False
         with self._lock:
             if 0 <= index < len(self._velocity):
                 self._velocity[index] = max(1, min(127, velocity))
@@ -37,6 +42,9 @@ class KeyState:
                 # its decay (a re-struck string), matching the piano metaphor.
                 self._onset[index] = time.monotonic()
                 self._held[index] = True
+                struck = True
+        if struck and self._on_press is not None:
+            self._on_press()   # count the keypress (no KeyState lock held here)
 
     def release(self, index: int) -> None:
         with self._lock:
